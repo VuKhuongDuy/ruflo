@@ -56,6 +56,135 @@ function ensureAgentDBImport(): Promise<void> {
   return agentdbImportPromise;
 }
 
+// ===== BM25 Keyword Search =====
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+  'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
+  'on', 'with', 'at', 'by', 'from', 'as', 'into', 'about', 'between',
+  'through', 'after', 'before', 'above', 'below', 'and', 'or', 'but',
+  'not', 'no', 'nor', 'so', 'yet', 'both', 'each', 'all', 'any',
+  'this', 'that', 'these', 'those', 'it', 'its', 'what', 'which',
+  'who', 'whom', 'how', 'when', 'where', 'why', 'if', 'then',
+  'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him', 'his',
+  'she', 'her', 'they', 'them', 'their',
+]);
+
+/**
+ * Tokenize text into searchable terms.
+ * Splits on whitespace/punctuation, lowercases, removes stop words,
+ * and preserves compound tokens like "create_or_update".
+ */
+function tokenize(text: string): string[] {
+  // Split on whitespace and common punctuation but preserve underscores/hyphens inside words
+  const raw = text.toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g) || [];
+  const tokens: string[] = [];
+  for (const t of raw) {
+    if (t.length > 1 && !STOP_WORDS.has(t)) {
+      tokens.push(t);
+      // Also split compound tokens (snake_case, kebab-case) into sub-tokens
+      if (t.includes('_') || t.includes('-')) {
+        for (const sub of t.split(/[_-]/)) {
+          if (sub.length > 1 && !STOP_WORDS.has(sub)) {
+            tokens.push(sub);
+          }
+        }
+      }
+    }
+  }
+  return tokens;
+}
+
+/**
+ * BM25 keyword index for hybrid search.
+ * Maintains inverted index + document lengths for BM25 scoring.
+ */
+class BM25Index {
+  // term -> Set<docId>
+  private invertedIndex: Map<string, Set<string>> = new Map();
+  // docId -> token count
+  private docLengths: Map<string, number> = new Map();
+  // total docs
+  private docCount = 0;
+  // average document length
+  private avgDocLength = 0;
+  // BM25 parameters
+  private k1 = 1.2;
+  private b = 0.75;
+
+  add(id: string, content: string): void {
+    const tokens = tokenize(content);
+    this.docLengths.set(id, tokens.length);
+    this.docCount++;
+    this.avgDocLength =
+      (this.avgDocLength * (this.docCount - 1) + tokens.length) / this.docCount;
+
+    for (const token of tokens) {
+      if (!this.invertedIndex.has(token)) {
+        this.invertedIndex.set(token, new Set());
+      }
+      this.invertedIndex.get(token)!.add(id);
+    }
+  }
+
+  remove(id: string): void {
+    const docLen = this.docLengths.get(id);
+    if (docLen === undefined) return;
+
+    // Remove from inverted index
+    this.invertedIndex.forEach((docIds) => {
+      docIds.delete(id);
+    });
+    this.docLengths.delete(id);
+    this.docCount--;
+    if (this.docCount > 0) {
+      this.avgDocLength =
+        (this.avgDocLength * (this.docCount + 1) - docLen) / this.docCount;
+    } else {
+      this.avgDocLength = 0;
+    }
+  }
+
+  /**
+   * Search using BM25 scoring.
+   * Returns sorted array of { id, score } pairs.
+   */
+  search(query: string, limit: number = 10): Array<{ id: string; score: number }> {
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return [];
+
+    const scores = new Map<string, number>();
+
+    for (const token of queryTokens) {
+      const docs = this.invertedIndex.get(token);
+      if (!docs || docs.size === 0) continue;
+
+      // IDF: log((N - n + 0.5) / (n + 0.5) + 1)
+      const n = docs.size;
+      const idf = Math.log((this.docCount - n + 0.5) / (n + 0.5) + 1);
+
+      docs.forEach((docId) => {
+        const dl = this.docLengths.get(docId) || 0;
+        // TF approximation: we count the term once per document in the inverted index
+        // For more accurate TF, we'd need to store term frequencies per doc
+        const tf = 1;
+        const tfNorm =
+          (tf * (this.k1 + 1)) /
+          (tf + this.k1 * (1 - this.b + this.b * (dl / (this.avgDocLength || 1))));
+        const bm25Score = idf * tfNorm;
+
+        scores.set(docId, (scores.get(docId) || 0) + bm25Score);
+      });
+    }
+
+    return Array.from(scores.entries())
+      .map(([id, score]) => ({ id, score }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  }
+}
+
 // ===== Configuration =====
 
 /**
@@ -146,6 +275,9 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
   // O(1) reverse lookup for numeric ID -> string ID (fixes O(n) linear scan)
   private numericToStringIdMap: Map<number, string> = new Map();
+
+  // BM25 keyword index for hybrid search
+  private bm25Index: BM25Index = new BM25Index();
 
   // Performance tracking
   private stats = {
@@ -262,6 +394,9 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     // Update indexes
     this.updateIndexes(entry);
 
+    // Index in BM25 for keyword search
+    this.bm25Index.add(entry.id, `${entry.key} ${entry.content}`);
+
     // Store in AgentDB if available
     if (this.agentdb) {
       await this.storeInAgentDB(entry);
@@ -314,6 +449,9 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     // Apply updates
     if (update.content !== undefined) {
       entry.content = update.content;
+      // Re-index BM25
+      this.bm25Index.remove(id);
+      this.bm25Index.add(id, `${entry.key} ${entry.content}`);
       // Regenerate embedding if needed
       if (this.config.embeddingGenerator) {
         entry.embedding = await this.config.embeddingGenerator(entry.content);
@@ -362,6 +500,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     // Remove from indexes
     this.entries.delete(id);
     this.unregisterIdMapping(id); // Clean up reverse lookup map
+    this.bm25Index.remove(id);
     this.namespaceIndex.get(entry.namespace)?.delete(id);
     const keyIndexKey = `${entry.namespace}:${entry.key}`;
     this.keyIndex.delete(keyIndexKey);
@@ -873,24 +1012,89 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
   }
 
   /**
-   * Semantic search helper
+   * Hybrid search: combines BM25 keyword search with vector semantic search.
+   * Uses Reciprocal Rank Fusion (RRF) to merge results from both strategies.
    */
   private async semanticSearch(query: MemoryQuery): Promise<SearchResult[]> {
-    let embedding = query.embedding;
+    const limit = query.limit || 10;
+    const fetchK = Math.max(limit * 2, 20); // fetch more candidates for merging
 
+    // 1. BM25 keyword search (always runs if there's text content)
+    const bm25Results: Array<{ id: string; score: number }> = [];
+    if (query.content) {
+      const hits = this.bm25Index.search(query.content, fetchK);
+      bm25Results.push(...hits);
+    }
+
+    // 2. Vector semantic search (if embedding available)
+    let vectorResults: SearchResult[] = [];
+    let embedding = query.embedding;
     if (!embedding && query.content && this.config.embeddingGenerator) {
       embedding = await this.config.embeddingGenerator(query.content);
     }
+    if (embedding) {
+      vectorResults = await this.search(embedding, {
+        k: fetchK,
+        threshold: query.threshold,
+        filters: query,
+      });
+    }
 
-    if (!embedding) {
+    // 3. If only one strategy returned results, return it directly
+    if (bm25Results.length === 0 && vectorResults.length > 0) {
+      return vectorResults.slice(0, limit);
+    }
+    if (vectorResults.length === 0 && bm25Results.length > 0) {
+      return bm25Results
+        .filter((r) => this.entries.has(r.id))
+        .map((r) => ({
+          entry: this.entries.get(r.id)!,
+          score: r.score,
+          distance: 1 - r.score,
+        }))
+        .slice(0, limit);
+    }
+    if (bm25Results.length === 0 && vectorResults.length === 0) {
       return [];
     }
 
-    return this.search(embedding, {
-      k: query.limit,
-      threshold: query.threshold,
-      filters: query,
-    });
+    // 4. Reciprocal Rank Fusion (RRF) to merge both result sets
+    //    RRF score = sum(1 / (k + rank)) where k=60 is a constant
+    const rrfK = 60;
+    const fusedScores = new Map<string, number>();
+
+    // Add BM25 ranks
+    for (let i = 0; i < bm25Results.length; i++) {
+      const id = bm25Results[i].id;
+      fusedScores.set(id, (fusedScores.get(id) || 0) + 1 / (rrfK + i + 1));
+    }
+
+    // Add vector search ranks
+    for (let i = 0; i < vectorResults.length; i++) {
+      const id = vectorResults[i].entry.id;
+      fusedScores.set(id, (fusedScores.get(id) || 0) + 1 / (rrfK + i + 1));
+    }
+
+    // Build a lookup for vector results (to reuse their entry objects)
+    const vectorResultMap = new Map<string, SearchResult>();
+    for (const vr of vectorResults) {
+      vectorResultMap.set(vr.entry.id, vr);
+    }
+
+    // Sort by fused score and return
+    return Array.from(fusedScores.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, limit)
+      .map(([id, rrfScore]) => {
+        const existing = vectorResultMap.get(id);
+        if (existing) {
+          return { ...existing, score: rrfScore };
+        }
+        const entry = this.entries.get(id);
+        if (!entry) return null;
+        return { entry, score: rrfScore, distance: 1 - rrfScore };
+      })
+      .filter((r): r is SearchResult => r !== null);
   }
 
   /**
