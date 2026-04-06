@@ -15,6 +15,7 @@ import type {
   Trajectory,
   TrajectoryStep,
 } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * Default PPO configuration
@@ -185,7 +186,7 @@ export class PPOAlgorithm {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 10) {
-      console.warn(`PPO update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
+      algorithmLogger.warn(`PPO update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
     }
 
     return {

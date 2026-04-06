@@ -19,6 +19,7 @@ import type {
   EWCState,
 } from '../types.js';
 import { BaseModeImplementation } from './base.js';
+import { modeLogger } from '../logger.js';
 
 /**
  * Edge mode for resource-constrained devices
@@ -317,7 +318,7 @@ export class EdgeMode extends BaseModeImplementation {
       try {
         await update();
       } catch (error) {
-        console.error('Edge mode async update failed:', error);
+        modeLogger.error('Edge mode async update failed', error);
       }
     }
 

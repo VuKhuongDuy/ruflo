@@ -12,6 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
+import { cacheLogger } from './logger.js';
 
 // Use 'any' for sql.js types to avoid complex typing issues
 // sql.js has its own types but they don't always match perfectly
@@ -123,8 +124,7 @@ export class PersistentEmbeddingCache {
       this.initialized = true;
     } catch (error) {
       // If sql.js not available, fall back gracefully
-      console.warn('[persistent-cache] sql.js not available, cache disabled:',
-        error instanceof Error ? error.message : error);
+      cacheLogger.warn('sql.js not available, cache disabled', { reason: error instanceof Error ? error.message : String(error) });
       this.initialized = true; // Mark as initialized to prevent retry
     }
   }
@@ -164,7 +164,7 @@ export class PersistentEmbeddingCache {
       writeFileSync(this.dbPath, buffer);
       this.dirty = false;
     } catch (error) {
-      console.error('[persistent-cache] Save error:', error);
+      cacheLogger.error('Save error', error);
     }
   }
 
@@ -251,7 +251,7 @@ export class PersistentEmbeddingCache {
       this.hits++;
       return this.deserializeEmbedding(row.embedding, row.dimensions);
     } catch (error) {
-      console.error('[persistent-cache] Get error:', error);
+      cacheLogger.error('Get error', error);
       this.misses++;
       return null;
     }
@@ -282,7 +282,7 @@ export class PersistentEmbeddingCache {
       // Check size and evict if needed
       await this.evictIfNeeded();
     } catch (error) {
-      console.error('[persistent-cache] Set error:', error);
+      cacheLogger.error('Set error', error);
     }
   }
 

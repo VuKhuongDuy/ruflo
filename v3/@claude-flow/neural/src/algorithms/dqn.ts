@@ -16,6 +16,7 @@ import type {
   Trajectory,
   TrajectoryStep,
 } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * Default DQN configuration
@@ -186,7 +187,7 @@ export class DQNAlgorithm {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 10) {
-      console.warn(`DQN update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
+      algorithmLogger.warn(`DQN update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
     }
 
     return {

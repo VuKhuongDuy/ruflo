@@ -108,6 +108,15 @@ export {
   type NeuralSubstrateConfig,
 } from './neural-integration.js';
 
+// Module logger
+export {
+  embeddingsLogger,
+  cacheLogger,
+  providerLogger,
+  neuralIntegrationLogger,
+  rvfLogger,
+} from './logger.js';
+
 export type {
   EmbeddingProvider,
   EmbeddingConfig,

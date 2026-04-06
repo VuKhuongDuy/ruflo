@@ -18,6 +18,7 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'fs';
+import { rvfLogger } from './logger.js';
 import { dirname } from 'path';
 
 /** Validate a file path is safe */
@@ -475,10 +476,7 @@ export class RvfEmbeddingCache {
       renameSync(tmpPath, this.cachePath);
       this.dirty = false;
     } catch (error) {
-      console.error(
-        '[rvf-embedding-cache] Flush error:',
-        error instanceof Error ? error.message : error
-      );
+      rvfLogger.error('Flush error', error);
     }
   }
 
@@ -501,7 +499,7 @@ export class RvfEmbeddingCache {
       // Verify magic
       for (let i = 0; i < MAGIC.length; i++) {
         if (bytes[offset + i] !== MAGIC[i]) {
-          console.warn('[rvf-embedding-cache] Invalid magic bytes, skipping load');
+          rvfLogger.warn('Invalid magic bytes, skipping load');
           return;
         }
       }
@@ -530,7 +528,7 @@ export class RvfEmbeddingCache {
           ? dims * 4 + 8 + 8 + 8   // v2: embedding + createdAt + accessedAt + accessCount
           : dims * 4 + 8 + 8;       // v1: embedding + accessedAt + accessCount
         if (offset + entryDataSize > buffer.byteLength) {
-          console.warn('[rvf-embedding-cache] Truncated entry, stopping load');
+          rvfLogger.warn('Truncated entry, stopping load');
           break;
         }
 
@@ -569,9 +567,7 @@ export class RvfEmbeddingCache {
         });
       }
     } catch (error) {
-      console.warn(
-        '[rvf-embedding-cache] Load error:',
-        error instanceof Error ? error.message : error
+      rvfLogger.warn('Load error', { reason: error instanceof Error ? error.message : String(error) }
       );
     }
   }

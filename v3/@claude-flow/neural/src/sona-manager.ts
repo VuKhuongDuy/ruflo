@@ -40,6 +40,7 @@ import { ResearchMode } from './modes/research.js';
 import { EdgeMode } from './modes/edge.js';
 import { BatchMode } from './modes/batch.js';
 import type { ModeImplementation } from './modes/index.js';
+import { sonaLogger } from './logger.js';
 
 /**
  * Default mode configurations
@@ -482,7 +483,7 @@ export class SONAManager {
 
     // Verify performance target
     if (latency > 0.05 && this.currentMode !== 'research' && this.currentMode !== 'batch') {
-      console.warn(`SONA adaptation exceeded target: ${latency.toFixed(3)}ms > 0.05ms`);
+      sonaLogger.warn(`SONA adaptation exceeded target: ${latency.toFixed(3)}ms > 0.05ms`);
     }
 
     return output;
@@ -694,7 +695,7 @@ export class SONAManager {
       try {
         listener(event);
       } catch (error) {
-        console.error('Error in neural event listener:', error);
+        sonaLogger.error('Error in neural event listener', error);
       }
     }
   }

@@ -15,6 +15,7 @@ import type {
   Trajectory,
   TrajectoryStep,
 } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * Default Decision Transformer configuration
@@ -182,7 +183,7 @@ export class DecisionTransformer {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 10) {
-      console.warn(`DT training exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
+      algorithmLogger.warn(`DT training exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
     }
 
     return {

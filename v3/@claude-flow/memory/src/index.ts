@@ -42,6 +42,19 @@
  * ```
  */
 
+// ===== Module Logger =====
+export {
+  memoryLogger,
+  agentdbLogger,
+  hnswLogger,
+  sqliteLogger,
+  sqljsLogger,
+  hybridLogger,
+  cacheLogger as memoryCacheLogger,
+  migrationLogger,
+  databaseProviderLogger,
+} from './logger.js';
+
 // ===== Core Types =====
 export type {
   // Memory Entry Types

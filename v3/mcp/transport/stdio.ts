@@ -171,25 +171,32 @@ export class StdioTransport extends EventEmitter implements ITransport {
       const message = JSON.parse(line);
       this.messagesReceived++;
 
+      this.logger.debug('[STDIO] Received message', {
+        method: message.method,
+        id: message.id,
+        hasParams: !!message.params,
+        msgCount: this.messagesReceived,
+      });
+
       // Validate JSON-RPC format
       if (message.jsonrpc !== '2.0') {
-        this.logger.warn('Invalid JSON-RPC version', { received: message.jsonrpc });
+        this.logger.warn('[STDIO] Invalid JSON-RPC version', { received: message.jsonrpc });
         await this.sendError(message.id, -32600, 'Invalid JSON-RPC version');
         return;
       }
 
       if (!message.method) {
-        this.logger.warn('Missing method in request');
+        this.logger.warn('[STDIO] Missing method in request');
         await this.sendError(message.id, -32600, 'Missing method');
         return;
       }
 
       // Determine if this is a request or notification
       if (message.id !== undefined) {
-        // Request - needs response
+        this.logger.debug('[STDIO] Dispatching as request', { method: message.method, id: message.id });
         await this.handleRequest(message as MCPRequest);
       } else {
-        // Notification - no response needed
+        this.logger.debug('[STDIO] Dispatching as notification', { method: message.method });
         await this.handleNotification(message as MCPNotification);
       }
     } catch (error) {
@@ -252,6 +259,12 @@ export class StdioTransport extends EventEmitter implements ITransport {
    */
   private async sendResponse(response: MCPResponse): Promise<void> {
     const json = JSON.stringify(response);
+    this.logger.debug('[STDIO] Sending response', {
+      id: response.id,
+      hasResult: !!response.result,
+      hasError: !!response.error,
+      bytes: json.length,
+    });
     await this.write(json);
     this.messagesSent++;
   }

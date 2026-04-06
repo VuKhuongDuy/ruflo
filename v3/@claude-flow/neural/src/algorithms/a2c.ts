@@ -15,6 +15,7 @@ import type {
   Trajectory,
   TrajectoryStep,
 } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * A2C configuration
@@ -204,7 +205,7 @@ export class A2CAlgorithm {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 10) {
-      console.warn(`A2C update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
+      algorithmLogger.warn(`A2C update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
     }
 
     return {

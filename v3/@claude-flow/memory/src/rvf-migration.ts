@@ -9,6 +9,7 @@ import { dirname, resolve } from 'node:path';
 import { RvfBackend } from './rvf-backend.js';
 import type { MemoryEntry, MemoryType, AccessLevel } from './types.js';
 import { generateMemoryId } from './types.js';
+import { migrationLogger } from './logger.js';
 
 /** Options for controlling the migration process. */
 export interface RvfMigrationOptions {
@@ -186,7 +187,7 @@ export class RvfMigrator {
     catch (e) { return mkResult(false, 0, 'json', 'rvf', start, [`Invalid JSON: ${(e as Error).message}`]); }
     const items = Array.isArray(parsed) ? parsed : [parsed as Record<string, unknown>];
     const { migrated, errors } = await migrateBatches(items, rvfPath, options);
-    if (options.verbose) console.log(`[RvfMigrator] Migrated ${migrated} entries from JSON to RVF`);
+    if (options.verbose) migrationLogger.info(`Migrated ${migrated} entries from JSON to RVF`);
     return mkResult(errors.length === 0, migrated, 'json', 'rvf', start, errors);
   }
 
@@ -200,7 +201,7 @@ export class RvfMigrator {
     catch (e) { return mkResult(false, 0, 'sqlite', 'rvf', start, [(e as Error).message]); }
     options.onProgress?.({ current: 0, total: rows.length, phase: 'reading' });
     const { migrated, errors } = await migrateBatches(rows, rvfPath, options, normalizeSqliteRow);
-    if (options.verbose) console.log(`[RvfMigrator] Migrated ${migrated} entries from SQLite to RVF`);
+    if (options.verbose) migrationLogger.info(`Migrated ${migrated} entries from SQLite to RVF`);
     return mkResult(errors.length === 0, migrated, 'sqlite', 'rvf', start, errors);
   }
 
@@ -243,7 +244,7 @@ export class RvfMigrator {
     sourcePath: string, targetRvfPath: string, options: RvfMigrationOptions = {},
   ): Promise<RvfMigrationResult> {
     const format = await RvfMigrator.detectFormat(sourcePath);
-    if (options.verbose) console.log(`[RvfMigrator] Detected source format: ${format}`);
+    if (options.verbose) migrationLogger.info(`Detected source format: ${format}`);
     switch (format) {
       case 'json':   return RvfMigrator.fromJsonFile(sourcePath, targetRvfPath, options);
       case 'sqlite': return RvfMigrator.fromSqlite(sourcePath, targetRvfPath, options);

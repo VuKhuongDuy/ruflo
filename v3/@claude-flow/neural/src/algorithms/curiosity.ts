@@ -11,6 +11,7 @@
  */
 
 import type { CuriosityConfig, Trajectory, TrajectoryStep } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * Default Curiosity configuration
@@ -137,7 +138,7 @@ export class CuriosityModule {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 5) {
-      console.warn(`ICM reward exceeded target: ${elapsed.toFixed(2)}ms > 5ms`);
+      algorithmLogger.warn(`ICM reward exceeded target: ${elapsed.toFixed(2)}ms > 5ms`);
     }
 
     return intrinsic * this.config.intrinsicCoef;
@@ -166,7 +167,7 @@ export class CuriosityModule {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 5) {
-      console.warn(`RND reward exceeded target: ${elapsed.toFixed(2)}ms > 5ms`);
+      algorithmLogger.warn(`RND reward exceeded target: ${elapsed.toFixed(2)}ms > 5ms`);
     }
 
     return intrinsic * this.config.intrinsicCoef;
@@ -216,7 +217,7 @@ export class CuriosityModule {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 10) {
-      console.warn(`Curiosity update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
+      algorithmLogger.warn(`Curiosity update exceeded target: ${elapsed.toFixed(2)}ms > 10ms`);
     }
 
     return {

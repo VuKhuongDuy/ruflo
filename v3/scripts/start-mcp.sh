@@ -245,7 +245,7 @@ if [ ! -f "$SERVER_ENTRY" ]; then
 fi
 
 # Build command
-CMD="npx tsx $SERVER_ENTRY \
+CMD="npx -y tsx $SERVER_ENTRY \
     --transport $TRANSPORT \
     --host $HOST \
     --port $PORT \

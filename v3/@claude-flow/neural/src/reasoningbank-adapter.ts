@@ -25,6 +25,7 @@ import type {
 } from './types.js';
 import { createSONAManager, SONAManager } from './sona-manager.js';
 import { createPatternLearner, PatternLearner } from './pattern-learner.js';
+import { reasoningBankLogger } from './logger.js';
 
 // ============================================================================
 // ReasoningBank Types (agentic-flow compatible)
@@ -412,7 +413,7 @@ export class ReasoningBankAdapter {
         ) {
           contradictionsFound++;
           // Log contradiction for analysis (don't auto-remove)
-          console.warn(`Contradiction detected: ${patterns[i].id} vs ${patterns[j].id}`);
+          reasoningBankLogger.warn(`Contradiction detected: ${patterns[i].id} vs ${patterns[j].id}`);
         }
       }
     }

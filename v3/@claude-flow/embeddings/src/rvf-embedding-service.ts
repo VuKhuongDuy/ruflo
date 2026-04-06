@@ -34,6 +34,7 @@ import type {
 } from './types.js';
 import { normalize } from './normalization.js';
 import { RvfEmbeddingCache } from './rvf-embedding-cache.js';
+import { rvfLogger } from './logger.js';
 
 // ============================================================================
 // Constants
@@ -306,7 +307,7 @@ export class RvfEmbeddingService extends EventEmitter implements IEmbeddingServi
       try {
         listener(event);
       } catch (error) {
-        console.error('Error in embedding event listener:', error);
+        rvfLogger.error('Error in embedding event listener', error);
       }
     }
     this.emit(event.type, event);

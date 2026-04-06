@@ -26,6 +26,7 @@ import {
   generateMemoryId,
   createDefaultEntry,
 } from './types.js';
+import { sqliteLogger } from './logger.js';
 
 /**
  * Configuration for SQLite Backend
@@ -101,7 +102,7 @@ export class SQLiteBackend extends EventEmitter implements IMemoryBackend {
 
     // Open database connection
     this.db = new Database(this.config.databasePath, {
-      verbose: this.config.verbose ? console.log : undefined,
+      verbose: this.config.verbose ? (msg?: unknown) => sqliteLogger.debug(String(msg ?? '')) : undefined,
     });
 
     // Enable WAL mode for better concurrency
@@ -386,9 +387,7 @@ export class SQLiteBackend extends EventEmitter implements IMemoryBackend {
   ): Promise<SearchResult[]> {
     // SQLite is not optimized for vector search
     // This method returns empty to encourage use of HybridBackend
-    console.warn(
-      'SQLiteBackend.search(): Vector search not optimized. Use HybridBackend for semantic search.'
-    );
+    sqliteLogger.warn('SQLiteBackend.search(): Vector search not optimized. Use HybridBackend for semantic search.');
     return [];
   }
 

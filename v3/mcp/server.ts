@@ -130,13 +130,20 @@ export class MCPServer extends EventEmitter implements IMCPServer {
     super();
     this.config = { ...DEFAULT_CONFIG, ...config } as MCPServerConfig;
 
+    this.logger.debug('[SERVER] Initializing components...');
+
     // Initialize components
     this.toolRegistry = createToolRegistry(logger);
+    this.logger.debug('[SERVER] ToolRegistry created');
+
     this.sessionManager = createSessionManager(logger, {
       maxSessions: 100,
       sessionTimeout: 30 * 60 * 1000,
     });
+    this.logger.debug('[SERVER] SessionManager created');
+
     this.transportManager = createTransportManager(logger);
+    this.logger.debug('[SERVER] TransportManager created');
 
     // Initialize connection pool if enabled
     if (this.config.connectionPool) {
@@ -145,10 +152,12 @@ export class MCPServer extends EventEmitter implements IMCPServer {
         logger,
         this.config.transport
       );
+      this.logger.debug('[SERVER] ConnectionPool created');
     }
 
     // Setup event handlers
     this.setupEventHandlers();
+    this.logger.debug('[SERVER] Event handlers configured');
   }
 
   /**
@@ -170,6 +179,7 @@ export class MCPServer extends EventEmitter implements IMCPServer {
 
     try {
       // Create and start transport
+      this.logger.debug('[SERVER] Creating transport', { type: this.config.transport });
       this.transport = createTransport(this.config.transport, this.logger, {
         type: this.config.transport,
         host: this.config.host,
@@ -181,6 +191,8 @@ export class MCPServer extends EventEmitter implements IMCPServer {
         requestTimeout: this.config.requestTimeout,
       } as any);
 
+      this.logger.debug('[SERVER] Transport created, binding handlers...');
+
       // Setup request handler
       this.transport.onRequest(async (request) => {
         return await this.handleRequest(request);
@@ -191,11 +203,16 @@ export class MCPServer extends EventEmitter implements IMCPServer {
         await this.handleNotification(notification);
       });
 
+      this.logger.debug('[SERVER] Handlers bound, starting transport...');
+
       // Start transport
       await this.transport.start();
+      this.logger.debug('[SERVER] Transport started');
 
       // Register built-in tools
+      this.logger.debug('[SERVER] Registering built-in tools...');
       await this.registerBuiltInTools();
+      this.logger.debug('[SERVER] Built-in tools registered');
 
       this.running = true;
       this.startupDuration = performance.now() - startTime;
@@ -385,14 +402,17 @@ export class MCPServer extends EventEmitter implements IMCPServer {
     try {
       // Handle initialization
       if (request.method === 'initialize') {
+        this.logger.debug('[SERVER] Routing to handleInitialize', { id: request.id });
         return await this.handleInitialize(request);
       }
 
       // Get or create session
       const session = this.getOrCreateSession();
+      this.logger.debug('[SERVER] Session resolved', { sessionId: session.id, initialized: session.isInitialized });
 
       // Check initialization
       if (!session.isInitialized && request.method !== 'initialized') {
+        this.logger.debug('[SERVER] Rejecting request — server not initialized', { method: request.method });
         return this.createErrorResponse(
           request.id,
           ErrorCodes.SERVER_NOT_INITIALIZED,
@@ -404,6 +424,7 @@ export class MCPServer extends EventEmitter implements IMCPServer {
       this.sessionManager.updateActivity(session.id);
 
       // Route request
+      this.logger.debug('[SERVER] Routing request', { method: request.method, id: request.id });
       const response = await this.routeRequest(request);
 
       const duration = performance.now() - startTime;
@@ -499,20 +520,27 @@ export class MCPServer extends EventEmitter implements IMCPServer {
    * Route request to appropriate handler
    */
   private async routeRequest(request: MCPRequest): Promise<MCPResponse> {
+    this.logger.debug('[ROUTER] Routing method', { method: request.method });
+
     switch (request.method) {
       case 'tools/list':
+        this.logger.debug('[ROUTER] -> handleToolsList');
         return this.handleToolsList(request);
 
       case 'tools/call':
+        this.logger.debug('[ROUTER] -> handleToolsCall', { tool: (request.params as any)?.name });
         return this.handleToolsCall(request);
 
       case 'resources/list':
+        this.logger.debug('[ROUTER] -> handleResourcesList');
         return this.handleResourcesList(request);
 
       case 'prompts/list':
+        this.logger.debug('[ROUTER] -> handlePromptsList');
         return this.handlePromptsList(request);
 
       case 'ping':
+        this.logger.debug('[ROUTER] -> ping');
         return {
           jsonrpc: '2.0',
           id: request.id,
@@ -522,9 +550,11 @@ export class MCPServer extends EventEmitter implements IMCPServer {
       default:
         // Try to execute as tool call (backwards compatibility)
         if (this.toolRegistry.hasTool(request.method)) {
+          this.logger.debug('[ROUTER] -> handleToolExecution (legacy)', { method: request.method });
           return this.handleToolExecution(request);
         }
 
+        this.logger.debug('[ROUTER] Method not found', { method: request.method });
         return this.createErrorResponse(
           request.id,
           ErrorCodes.METHOD_NOT_FOUND,
@@ -557,12 +587,19 @@ export class MCPServer extends EventEmitter implements IMCPServer {
     const params = request.params as { name: string; arguments?: Record<string, unknown> };
 
     if (!params?.name) {
+      this.logger.debug('[TOOLS_CALL] Missing tool name in request');
       return this.createErrorResponse(
         request.id,
         ErrorCodes.INVALID_PARAMS,
         'Tool name is required'
       );
     }
+
+    this.logger.debug('[TOOLS_CALL] Executing tool', {
+      name: params.name,
+      argKeys: params.arguments ? Object.keys(params.arguments) : [],
+      sessionId: this.currentSession?.id,
+    });
 
     const context: ToolContext = {
       sessionId: this.currentSession?.id || 'unknown',
@@ -571,11 +608,19 @@ export class MCPServer extends EventEmitter implements IMCPServer {
       swarmCoordinator: this.swarmCoordinator,
     };
 
+    const execStart = performance.now();
     const result = await this.toolRegistry.execute(
       params.name,
       params.arguments || {},
       context
     );
+    const execDuration = performance.now() - execStart;
+
+    this.logger.debug('[TOOLS_CALL] Tool execution finished', {
+      name: params.name,
+      duration: `${execDuration.toFixed(2)}ms`,
+      isError: result.isError,
+    });
 
     return {
       jsonrpc: '2.0',

@@ -1466,11 +1466,263 @@ const initMemoryCommand: Command = {
   }
 };
 
+// Ingest command - read files/folders, chunk, and store with embeddings
+const ingestCommand: Command = {
+  name: 'ingest',
+  description: 'Ingest files or folders into memory with automatic chunking and embeddings',
+  options: [
+    { name: 'file', short: 'f', description: 'File to ingest', type: 'string' },
+    { name: 'dir', short: 'd', description: 'Directory to ingest (recursive)', type: 'string' },
+    { name: 'namespace', short: 'n', description: 'Memory namespace', type: 'string', default: 'default' },
+    { name: 'strategy', short: 's', description: 'Chunking strategy: sentence|paragraph|character|token', type: 'string', default: 'sentence' },
+    { name: 'chunk-size', description: 'Max chunk size in characters', type: 'number', default: '512' },
+    { name: 'overlap', description: 'Overlap between chunks in characters', type: 'number', default: '50' },
+    { name: 'glob', short: 'g', description: 'Glob pattern for directory (default: **/*.{md,txt,ts,js,json,py,yaml,yml})', type: 'string' },
+    { name: 'no-chunk', description: 'Store whole files without chunking', type: 'boolean', default: false },
+    { name: 'tags', description: 'Comma-separated tags to add to all entries', type: 'string' },
+    { name: 'dry-run', description: 'Show what would be ingested without storing', type: 'boolean', default: false },
+  ],
+  examples: [
+    { command: 'claude-flow memory ingest -f ./docs/api.md -n docs', description: 'Ingest single file' },
+    { command: 'claude-flow memory ingest -d ./docs -n docs', description: 'Ingest entire folder' },
+    { command: 'claude-flow memory ingest -d ./src -g "**/*.ts" -n code --strategy paragraph', description: 'Ingest TypeScript files' },
+    { command: 'claude-flow memory ingest -d ./docs --dry-run', description: 'Preview without storing' },
+    { command: 'claude-flow memory ingest -f big-doc.md --chunk-size 256 --overlap 30', description: 'Custom chunk size' },
+  ],
+  action: async (ctx: CommandContext): Promise<CommandResult> => {
+    const filePath = ctx.flags.file as string;
+    const dirPath = ctx.flags.dir as string;
+    const namespace = ctx.flags.namespace as string || 'default';
+    const strategy = (ctx.flags.strategy as string || 'sentence') as 'sentence' | 'paragraph' | 'character' | 'token';
+    const chunkSize = parseInt(ctx.flags['chunk-size'] as string || '512', 10);
+    const overlap = parseInt(ctx.flags.overlap as string || '50', 10);
+    const globPattern = ctx.flags.glob as string || '**/*.{md,txt,ts,js,json,py,yaml,yml,jsx,tsx,css,html,rst,adoc}';
+    const noChunk = ctx.flags['no-chunk'] as boolean;
+    const extraTags = ctx.flags.tags ? (ctx.flags.tags as string).split(',') : [];
+    const dryRun = ctx.flags['dry-run'] as boolean;
+
+    if (!filePath && !dirPath) {
+      output.printError('Provide --file (-f) or --dir (-d)');
+      return { success: false, exitCode: 1 };
+    }
+
+    const fs = await import('fs');
+    const pathMod = await import('path');
+
+    // Collect files to ingest
+    const files: string[] = [];
+
+    if (filePath) {
+      const resolved = pathMod.resolve(filePath);
+      if (!fs.existsSync(resolved)) {
+        output.printError(`File not found: ${filePath}`);
+        return { success: false, exitCode: 1 };
+      }
+      files.push(resolved);
+    }
+
+    if (dirPath) {
+      const resolved = pathMod.resolve(dirPath);
+      if (!fs.existsSync(resolved)) {
+        output.printError(`Directory not found: ${dirPath}`);
+        return { success: false, exitCode: 1 };
+      }
+
+      // Simple recursive glob implementation
+      const collectFiles = (dir: string, pattern: string): string[] => {
+        const results: string[] = [];
+        const extensions = pattern.match(/\{([^}]+)\}/)?.[1]?.split(',').map(e => `.${e}`) || [];
+
+        const walk = (d: string) => {
+          try {
+            const entries = fs.readdirSync(d, { withFileTypes: true });
+            for (const entry of entries) {
+              const full = pathMod.join(d, entry.name);
+              if (entry.isDirectory()) {
+                if (!entry.name.startsWith('.') && entry.name !== 'node_modules' && entry.name !== 'dist') {
+                  walk(full);
+                }
+              } else if (entry.isFile()) {
+                if (extensions.length === 0 || extensions.some(ext => entry.name.endsWith(ext))) {
+                  results.push(full);
+                }
+              }
+            }
+          } catch { /* skip inaccessible dirs */ }
+        };
+
+        walk(dir);
+        return results.sort();
+      };
+
+      files.push(...collectFiles(resolved, globPattern));
+    }
+
+    if (files.length === 0) {
+      output.printError('No files matched the pattern');
+      return { success: false, exitCode: 1 };
+    }
+
+    output.printInfo(`Found ${files.length} file(s) to ingest into namespace "${namespace}"`);
+    output.writeln(output.dim(`  Strategy: ${strategy}, Chunk size: ${chunkSize}, Overlap: ${overlap}`));
+
+    if (dryRun) {
+      output.writeln();
+      output.writeln(output.bold('Dry run - files that would be ingested:'));
+      for (const f of files) {
+        const stat = fs.statSync(f);
+        const rel = pathMod.relative(process.cwd(), f);
+        const estChunks = noChunk ? 1 : Math.max(1, Math.ceil(stat.size / (chunkSize - overlap)));
+        output.writeln(`  ${rel} (${stat.size} bytes, ~${estChunks} chunks)`);
+      }
+      return { success: true };
+    }
+
+    // Load chunking from @claude-flow/embeddings
+    let chunkText: ((text: string, config: { maxChunkSize?: number; overlap?: number; strategy?: 'sentence' | 'paragraph' | 'character' | 'token'; minChunkSize?: number }) => { chunks: { text: string; index: number }[]; totalChunks: number }) | null = null;
+
+    if (!noChunk) {
+      try {
+        const embeddings = await import('@claude-flow/embeddings');
+        chunkText = embeddings.chunkText;
+      } catch {
+        output.writeln(output.warning('  @claude-flow/embeddings not available, using built-in sentence splitter'));
+        // Fallback: simple sentence-based chunker
+        chunkText = (text: string, config: { maxChunkSize?: number; overlap?: number }) => {
+          const max = config.maxChunkSize || 512;
+          const ovlp = config.overlap || 50;
+          const sentences = text.split(/(?<=[.!?])\s+/);
+          const chunks: { text: string; index: number }[] = [];
+          let current = '';
+          let idx = 0;
+
+          for (const s of sentences) {
+            if (current.length + s.length > max && current.length > 0) {
+              chunks.push({ text: current.trim(), index: idx++ });
+              current = current.slice(-(ovlp)) + ' ' + s;
+            } else {
+              current += (current ? ' ' : '') + s;
+            }
+          }
+          if (current.trim()) chunks.push({ text: current.trim(), index: idx });
+          return { chunks, totalChunks: chunks.length };
+        };
+      }
+    }
+
+    const { storeEntry } = await import('../memory/memory-initializer.js');
+
+    let totalChunks = 0;
+    let totalFiles = 0;
+    let errors = 0;
+    const baseDir = dirPath ? pathMod.resolve(dirPath) : pathMod.dirname(files[0]);
+
+    for (const file of files) {
+      const rel = pathMod.relative(baseDir, file);
+      const fileKey = rel.replace(/[/\\]/g, '-').replace(/\.[^.]+$/, '');
+
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+
+        if (!content.trim()) {
+          output.writeln(output.dim(`  Skip empty: ${rel}`));
+          continue;
+        }
+
+        if (noChunk || !chunkText) {
+          // Store whole file as single entry
+          const result = await storeEntry({
+            key: fileKey,
+            value: content,
+            namespace,
+            generateEmbeddingFlag: true,
+            tags: [...extraTags, `source:${rel}`],
+            upsert: true,
+          });
+
+          if (result.success) {
+            totalChunks++;
+            output.writeln(`  ${output.success('+')} ${rel} (1 entry, ${content.length} chars)`);
+          } else {
+            errors++;
+            output.writeln(`  ${output.error('x')} ${rel}: ${result.error}`);
+          }
+        } else {
+          // Chunk and store
+          const { chunks, totalChunks: numChunks } = chunkText(content, {
+            maxChunkSize: chunkSize,
+            overlap,
+            strategy,
+          });
+
+          let fileChunks = 0;
+          for (const chunk of chunks) {
+            const chunkKey = `${fileKey}-chunk-${chunk.index}`;
+            const result = await storeEntry({
+              key: chunkKey,
+              value: chunk.text,
+              namespace,
+              generateEmbeddingFlag: true,
+              tags: [
+                ...extraTags,
+                `source:${rel}`,
+                `parent:${fileKey}`,
+                `chunk:${chunk.index}/${numChunks}`,
+              ],
+              upsert: true,
+            });
+
+            if (result.success) {
+              fileChunks++;
+            } else {
+              errors++;
+            }
+          }
+
+          totalChunks += fileChunks;
+          output.writeln(`  ${output.success('+')} ${rel} (${fileChunks} chunks, ${content.length} chars)`);
+        }
+
+        totalFiles++;
+      } catch (err) {
+        errors++;
+        output.writeln(`  ${output.error('x')} ${rel}: ${err instanceof Error ? err.message : 'read error'}`);
+      }
+    }
+
+    output.writeln();
+    output.printTable({
+      columns: [
+        { key: 'metric', header: 'Metric', width: 20 },
+        { key: 'val', header: 'Value', width: 30 },
+      ],
+      data: [
+        { metric: 'Files processed', val: `${totalFiles}` },
+        { metric: 'Chunks stored', val: `${totalChunks}` },
+        { metric: 'Errors', val: `${errors}` },
+        { metric: 'Namespace', val: namespace },
+        { metric: 'Strategy', val: noChunk ? 'none (whole file)' : strategy },
+      ],
+    });
+
+    if (errors > 0) {
+      output.writeln();
+      output.printWarning(`${errors} error(s) occurred during ingestion`);
+    }
+
+    output.writeln();
+    output.printSuccess(`Ingested ${totalFiles} file(s) → ${totalChunks} entries in "${namespace}"`);
+    output.writeln(output.dim(`  Search with: claude-flow memory search --query "your query" --namespace ${namespace}`));
+
+    return { success: true, data: { files: totalFiles, chunks: totalChunks, errors } };
+  }
+};
+
 // Main memory command
 export const memoryCommand: Command = {
   name: 'memory',
   description: 'Memory management commands',
-  subcommands: [initMemoryCommand, storeCommand, retrieveCommand, searchCommand, listCommand, deleteCommand, statsCommand, configureCommand, cleanupCommand, compressCommand, exportCommand, importCommand],
+  subcommands: [initMemoryCommand, storeCommand, retrieveCommand, searchCommand, listCommand, deleteCommand, statsCommand, configureCommand, cleanupCommand, compressCommand, exportCommand, importCommand, ingestCommand],
   options: [],
   examples: [
     { command: 'claude-flow memory store -k "key" -v "value"', description: 'Store data' },
@@ -1496,7 +1748,8 @@ export const memoryCommand: Command = {
       `${output.highlight('cleanup')}    - Clean expired entries`,
       `${output.highlight('compress')}   - Compress database`,
       `${output.highlight('export')}     - Export memory to file`,
-      `${output.highlight('import')}     - Import from file`
+      `${output.highlight('import')}     - Import from file`,
+      `${output.highlight('ingest')}     - Ingest files/folder with chunking`
     ]);
 
     return { success: true };

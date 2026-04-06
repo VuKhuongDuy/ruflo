@@ -26,6 +26,7 @@ import {
   generateMemoryId,
   createDefaultEntry,
 } from './types.js';
+import { sqljsLogger } from './logger.js';
 
 /**
  * Configuration for SqlJs Backend
@@ -117,14 +118,14 @@ export class SqlJsBackend extends EventEmitter implements IMemoryBackend {
       this.db = new this.SQL.Database(new Uint8Array(buffer));
 
       if (this.config.verbose) {
-        console.log(`[SqlJsBackend] Loaded database from ${this.config.databasePath}`);
+        sqljsLogger.info(`Loaded database from ${this.config.databasePath}`);
       }
     } else {
       // Create new database
       this.db = new this.SQL.Database();
 
       if (this.config.verbose) {
-        console.log('[SqlJsBackend] Created new in-memory database');
+        sqljsLogger.info('Created new in-memory database');
       }
     }
 
@@ -207,7 +208,7 @@ export class SqlJsBackend extends EventEmitter implements IMemoryBackend {
     );
 
     if (this.config.verbose) {
-      console.log('[SqlJsBackend] Schema created successfully');
+      sqljsLogger.info('Schema created successfully');
     }
   }
 
@@ -693,7 +694,7 @@ export class SqlJsBackend extends EventEmitter implements IMemoryBackend {
     writeFileSync(this.config.databasePath, buffer);
 
     if (this.config.verbose) {
-      console.log(`[SqlJsBackend] Persisted ${buffer.length} bytes to ${this.config.databasePath}`);
+      sqljsLogger.info(`Persisted ${buffer.length} bytes to ${this.config.databasePath}`);
     }
 
     this.emit('persisted', { size: buffer.length, path: this.config.databasePath });

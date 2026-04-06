@@ -25,6 +25,7 @@ import type {
   NeuralEvent,
   NeuralEventListener,
 } from './types.js';
+import { reasoningBankLogger } from './logger.js';
 
 // ============================================================================
 // AgentDB Integration
@@ -216,7 +217,7 @@ export class ReasoningBank {
           await this.agentdb.initialize();
           this.emitEvent({ type: 'memory_consolidated', memoriesCount: 0 });
         } catch (error) {
-          console.warn('AgentDB initialization failed, using fallback:', error);
+          reasoningBankLogger.warn('AgentDB initialization failed, using fallback', { reason: error instanceof Error ? error.message : String(error) });
           this.agentdbAvailable = false;
         }
       }
@@ -817,7 +818,7 @@ export class ReasoningBank {
       try {
         listener(event);
       } catch (error) {
-        console.error('Error in ReasoningBank event listener:', error);
+        reasoningBankLogger.error('Error in ReasoningBank event listener', error);
       }
     }
   }
@@ -847,7 +848,7 @@ export class ReasoningBank {
         });
       }
     } catch (error) {
-      console.warn('Failed to store in AgentDB:', error);
+      reasoningBankLogger.warn('Failed to store in AgentDB', { reason: error instanceof Error ? error.message : String(error) });
     }
   }
 

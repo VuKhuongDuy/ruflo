@@ -19,6 +19,7 @@ import type {
   NeuralEvent,
   NeuralEventListener,
 } from './types.js';
+import { patternLearnerLogger } from './logger.js';
 
 /**
  * Configuration for Pattern Learner
@@ -143,7 +144,7 @@ export class PatternLearner {
 
     // Warn if over target
     if (elapsed > 1) {
-      console.warn(`Pattern matching exceeded target: ${elapsed.toFixed(2)}ms > 1ms`);
+      patternLearnerLogger.warn(`Pattern matching exceeded target: ${elapsed.toFixed(2)}ms > 1ms`);
     }
 
     return result;
@@ -464,7 +465,7 @@ export class PatternLearner {
       try {
         listener(event);
       } catch (error) {
-        console.error('Error in PatternLearner event listener:', error);
+        patternLearnerLogger.error('Error in PatternLearner event listener', error);
       }
     }
   }

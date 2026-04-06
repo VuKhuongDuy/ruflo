@@ -100,7 +100,7 @@ dist/
 hive-mind-prompt-*.txt
 init-output.log
 lerna-debug.log*
-logs/
+# logs/
 mcp-server.log
 memory/backups/
 node_modules/

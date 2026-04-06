@@ -179,6 +179,19 @@ export type {
 } from './algorithms/index.js';
 
 // =============================================================================
+// Module Logger
+// =============================================================================
+
+export {
+  neuralLogger,
+  sonaLogger,
+  reasoningBankLogger,
+  patternLearnerLogger,
+  algorithmLogger,
+  modeLogger,
+} from './logger.js';
+
+// =============================================================================
 // Convenience Factory
 // =============================================================================
 

@@ -193,3 +193,22 @@ export * from './resilience/index.js';
 // Services
 // =============================================================================
 export * from './services/index.js';
+
+// =============================================================================
+// Logging Utilities
+// =============================================================================
+export {
+  SecureLogger,
+  createSecureLogger,
+  logger,
+  sanitizeErrorForLogging,
+  sanitizeMessageForLogging,
+} from './utils/secure-logger.js';
+
+export {
+  FileLogger,
+  createFileLogger,
+  createModuleLogger,
+  type LogLevel,
+  type FileLoggerConfig,
+} from './utils/file-logger.js';

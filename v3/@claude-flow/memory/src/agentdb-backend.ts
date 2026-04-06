@@ -10,7 +10,7 @@
  * @module v3/memory/agentdb-backend
  */
 
-import { EventEmitter } from 'node:events';
+import { EventEmitter } from "node:events";
 import {
   IMemoryBackend,
   MemoryEntry,
@@ -28,7 +28,8 @@ import {
   createDefaultEntry,
   CacheStats,
   HNSWStats,
-} from './types.js';
+} from "./types.js";
+import { agentdbLogger, hnswLogger } from "./logger.js";
 
 // ===== AgentDB Optional Import =====
 
@@ -43,7 +44,7 @@ function ensureAgentDBImport(): Promise<void> {
   if (!agentdbImportPromise) {
     agentdbImportPromise = (async () => {
       try {
-        const agentdbModule: any = await import('agentdb');
+        const agentdbModule: any = await import("agentdb");
         AgentDB = agentdbModule.AgentDB || agentdbModule.default;
         HNSWIndex = agentdbModule.HNSWIndex;
         isHnswlibAvailable = agentdbModule.isHnswlibAvailable;
@@ -71,7 +72,7 @@ export interface AgentDBBackendConfig {
   forceWasm?: boolean;
 
   /** Vector backend: 'auto', 'ruvector', 'hnswlib' */
-  vectorBackend?: 'auto' | 'ruvector' | 'hnswlib';
+  vectorBackend?: "auto" | "ruvector" | "hnswlib";
 
   /** Vector dimensions (default: 1536) */
   vectorDimension?: number;
@@ -99,11 +100,11 @@ export interface AgentDBBackendConfig {
  * Default configuration
  */
 const DEFAULT_CONFIG: Required<
-  Omit<AgentDBBackendConfig, 'dbPath' | 'embeddingGenerator'>
+  Omit<AgentDBBackendConfig, "dbPath" | "embeddingGenerator">
 > = {
-  namespace: 'default',
+  namespace: "default",
   forceWasm: false,
-  vectorBackend: 'auto',
+  vectorBackend: "auto",
   vectorDimension: 1536,
   hnswM: 16,
   hnswEfConstruction: 200,
@@ -129,7 +130,7 @@ const DEFAULT_CONFIG: Required<
  */
 export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
   private config: Required<
-    Omit<AgentDBBackendConfig, 'dbPath' | 'embeddingGenerator'>
+    Omit<AgentDBBackendConfig, "dbPath" | "embeddingGenerator">
   > & {
     dbPath?: string;
     embeddingGenerator?: EmbeddingGenerator;
@@ -164,6 +165,8 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    * Initialize AgentDB
    */
   async initialize(): Promise<void> {
+    agentdbLogger.info("Init agentDB");
+
     if (this.initialized) return;
 
     // Try to import AgentDB
@@ -172,7 +175,9 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     this.available = AgentDB !== undefined;
 
     if (!this.available) {
-      console.warn('AgentDB not available, using fallback in-memory storage');
+      agentdbLogger.warn(
+        "AgentDB not available, using fallback in-memory storage",
+      );
       this.initialized = true;
       return;
     }
@@ -180,7 +185,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     try {
       // Initialize AgentDB with config
       this.agentdb = new AgentDB({
-        dbPath: this.config.dbPath || ':memory:',
+        dbPath: this.config.dbPath || ":memory:",
         namespace: this.config.namespace,
         forceWasm: this.config.forceWasm,
         vectorBackend: this.config.vectorBackend,
@@ -191,11 +196,14 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       // (EmbeddingService, AgentDB core emit info-level logs we don't need)
       const origLog = console.log;
       console.log = (...args: unknown[]) => {
-        const msg = String(args[0] ?? '');
-        if (msg.includes('Transformers.js loaded') ||
-            msg.includes('Using better-sqlite3') ||
-            msg.includes('better-sqlite3 unavailable') ||
-            msg.includes('[AgentDB]')) return;
+        const msg = String(args[0] ?? "");
+        if (
+          msg.includes("Transformers.js loaded") ||
+          msg.includes("Using better-sqlite3") ||
+          msg.includes("better-sqlite3 unavailable") ||
+          msg.includes("[AgentDB]")
+        )
+          return;
         origLog.apply(console, args);
       };
       try {
@@ -208,15 +216,15 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       await this.createSchema();
 
       this.initialized = true;
-      this.emit('initialized', {
+      this.emit("initialized", {
         backend: this.agentdb.vectorBackendName,
         isWasm: this.agentdb.isWasm,
       });
     } catch (error) {
-      console.error('Failed to initialize AgentDB:', error);
+      agentdbLogger.error("Failed to initialize AgentDB", error);
       this.available = false;
       this.initialized = true;
-      this.emit('initialization:failed', { error });
+      this.emit("initialization:failed", { error });
     }
   }
 
@@ -231,7 +239,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     }
 
     this.initialized = false;
-    this.emit('shutdown');
+    this.emit("shutdown");
   }
 
   /**
@@ -239,6 +247,8 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    */
   async store(entry: MemoryEntry): Promise<void> {
     // Generate embedding if needed
+    agentdbLogger.info(`AgentDB store with entry: ${JSON.stringify(entry)}`);
+
     if (entry.content && !entry.embedding && this.config.embeddingGenerator) {
       entry.embedding = await this.config.embeddingGenerator(entry.content);
     }
@@ -257,13 +267,15 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       await this.storeInAgentDB(entry);
     }
 
-    this.emit('entry:stored', { id: entry.id });
+    this.emit("entry:stored", { id: entry.id });
   }
 
   /**
    * Get entry by ID
    */
   async get(id: string): Promise<MemoryEntry | null> {
+    agentdbLogger.info(`AgentDB get with id: ${id}`);
+
     // Check in-memory first
     const cached = this.entries.get(id);
     if (cached) return cached;
@@ -280,6 +292,9 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    * Get entry by key
    */
   async getByKey(namespace: string, key: string): Promise<MemoryEntry | null> {
+    agentdbLogger.info(
+      `AgentDB getByKey with namespace: ${namespace} and key: ${key}`,
+    );
     const keyIndexKey = `${namespace}:${key}`;
     const id = this.keyIndex.get(keyIndexKey);
     if (!id) return null;
@@ -289,7 +304,10 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
   /**
    * Update entry
    */
-  async update(id: string, update: MemoryEntryUpdate): Promise<MemoryEntry | null> {
+  async update(
+    id: string,
+    update: MemoryEntryUpdate,
+  ): Promise<MemoryEntry | null> {
     const entry = this.entries.get(id);
     if (!entry) return null;
 
@@ -330,7 +348,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       await this.updateInAgentDB(entry);
     }
 
-    this.emit('entry:updated', { id });
+    this.emit("entry:updated", { id });
     return entry;
   }
 
@@ -353,7 +371,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       await this.deleteFromAgentDB(id);
     }
 
-    this.emit('entry:deleted', { id });
+    this.emit("entry:deleted", { id });
     return true;
   }
 
@@ -364,7 +382,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     const startTime = performance.now();
     let results: MemoryEntry[] = [];
 
-    if (query.type === 'semantic' && (query.embedding || query.content)) {
+    if (query.type === "semantic" && (query.embedding || query.content)) {
       // Use semantic search
       const searchResults = await this.semanticSearch(query);
       results = searchResults.map((r) => r.entry);
@@ -385,7 +403,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    */
   async search(
     embedding: Float32Array,
-    options: SearchOptions
+    options: SearchOptions,
   ): Promise<SearchResult[]> {
     const startTime = performance.now();
 
@@ -404,7 +422,10 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
       return results;
     } catch (error) {
-      console.error('AgentDB search failed, falling back to brute-force:', error);
+      agentdbLogger.error(
+        "AgentDB search failed, falling back to brute-force",
+        error,
+      );
       return this.bruteForceSearch(embedding, options);
     }
   }
@@ -490,7 +511,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     let hnswStats: HNSWStats | undefined;
     if (this.agentdb && HNSWIndex) {
       try {
-        const hnsw = this.agentdb.getController('hnsw');
+        const hnsw = this.agentdb.getController("hnsw");
         if (hnsw) {
           const stats = hnsw.getStats();
           hnswStats = {
@@ -532,30 +553,33 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
     // Check AgentDB availability
     const storageHealth: ComponentHealth = this.agentdb
-      ? { status: 'healthy', latency: 0 }
+      ? { status: "healthy", latency: 0 }
       : {
-          status: 'degraded',
+          status: "degraded",
           latency: 0,
-          message: 'AgentDB not available, using fallback',
+          message: "AgentDB not available, using fallback",
         };
 
     // Check index health
-    const indexHealth: ComponentHealth = { status: 'healthy', latency: 0 };
+    const indexHealth: ComponentHealth = { status: "healthy", latency: 0 };
     if (!this.agentdb) {
-      indexHealth.status = 'degraded';
-      indexHealth.message = 'HNSW index not available';
-      recommendations.push('Install agentdb for 150x-12,500x faster vector search');
+      indexHealth.status = "degraded";
+      indexHealth.message = "HNSW index not available";
+      recommendations.push(
+        "Install agentdb for 150x-12,500x faster vector search",
+      );
     }
 
     // Check cache health
-    const cacheHealth: ComponentHealth = { status: 'healthy', latency: 0 };
+    const cacheHealth: ComponentHealth = { status: "healthy", latency: 0 };
 
     const status =
-      storageHealth.status === 'unhealthy' || indexHealth.status === 'unhealthy'
-        ? 'unhealthy'
-        : storageHealth.status === 'degraded' || indexHealth.status === 'degraded'
-          ? 'degraded'
-          : 'healthy';
+      storageHealth.status === "unhealthy" || indexHealth.status === "unhealthy"
+        ? "unhealthy"
+        : storageHealth.status === "degraded" ||
+            indexHealth.status === "degraded"
+          ? "degraded"
+          : "healthy";
 
     return {
       status,
@@ -579,14 +603,14 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     if (!this.agentdb) return;
 
     const db = this.agentdb.database;
-    if (!db || typeof db.run !== 'function') {
+    if (!db || typeof db.run !== "function") {
       // AgentDB doesn't expose raw database - using native API
       return;
     }
 
     try {
-    // Create memory_entries table
-    await db.run(`
+      // Create memory_entries table
+      await db.run(`
       CREATE TABLE IF NOT EXISTS memory_entries (
         id TEXT PRIMARY KEY,
         key TEXT NOT NULL,
@@ -608,12 +632,14 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
       )
     `);
 
-    // Create indexes
-    await db.run(
-      'CREATE INDEX IF NOT EXISTS idx_namespace ON memory_entries(namespace)'
-    );
-    await db.run('CREATE INDEX IF NOT EXISTS idx_key ON memory_entries(key)');
-    await db.run('CREATE INDEX IF NOT EXISTS idx_type ON memory_entries(type)');
+      // Create indexes
+      await db.run(
+        "CREATE INDEX IF NOT EXISTS idx_namespace ON memory_entries(namespace)",
+      );
+      await db.run("CREATE INDEX IF NOT EXISTS idx_key ON memory_entries(key)");
+      await db.run(
+        "CREATE INDEX IF NOT EXISTS idx_type ON memory_entries(type)",
+      );
     } catch {
       // Schema creation failed - using in-memory only
     }
@@ -627,7 +653,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
     // Try to use agentdb's native store method if available
     try {
-      if (typeof this.agentdb.store === 'function') {
+      if (typeof this.agentdb.store === "function") {
         await this.agentdb.store(entry.id, {
           key: entry.key,
           content: entry.content,
@@ -642,40 +668,40 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
       // Fallback: use database directly if available
       const db = this.agentdb.database;
-      if (!db || typeof db.run !== 'function') {
+      if (!db || typeof db.run !== "function") {
         // No compatible database interface - skip agentdb storage
         // Entry is already stored in-memory
         return;
       }
 
       await db.run(
-      `
+        `
       INSERT OR REPLACE INTO memory_entries
       (id, key, content, embedding, type, namespace, tags, metadata, owner_id,
        access_level, created_at, updated_at, expires_at, version, references,
        access_count, last_accessed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
-      [
-        entry.id,
-        entry.key,
-        entry.content,
-        entry.embedding ? Buffer.from(entry.embedding.buffer) : null,
-        entry.type,
-        entry.namespace,
-        JSON.stringify(entry.tags),
-        JSON.stringify(entry.metadata),
-        entry.ownerId || null,
-        entry.accessLevel,
-        entry.createdAt,
-        entry.updatedAt,
-        entry.expiresAt || null,
-        entry.version,
-        JSON.stringify(entry.references),
-        entry.accessCount,
-        entry.lastAccessedAt,
-      ]
-    );
+        [
+          entry.id,
+          entry.key,
+          entry.content,
+          entry.embedding ? Buffer.from(entry.embedding.buffer) : null,
+          entry.type,
+          entry.namespace,
+          JSON.stringify(entry.tags),
+          JSON.stringify(entry.metadata),
+          entry.ownerId || null,
+          entry.accessLevel,
+          entry.createdAt,
+          entry.updatedAt,
+          entry.expiresAt || null,
+          entry.version,
+          JSON.stringify(entry.references),
+          entry.accessCount,
+          entry.lastAccessedAt,
+        ],
+      );
     } catch {
       // AgentDB storage failed - entry is already in-memory
     }
@@ -683,7 +709,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     // Add to vector index if HNSW is available
     if (entry.embedding && HNSWIndex) {
       try {
-        const hnsw = this.agentdb.getController('hnsw');
+        const hnsw = this.agentdb.getController("hnsw");
         if (hnsw) {
           // Convert string ID to number for HNSW (use hash)
           const numericId = this.stringIdToNumeric(entry.id);
@@ -703,16 +729,18 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
     try {
       // Try native get method first
-      if (typeof this.agentdb.get === 'function') {
+      if (typeof this.agentdb.get === "function") {
         const data = await this.agentdb.get(id);
         if (data) return this.dataToEntry(id, data);
       }
 
       // Fallback to database
       const db = this.agentdb.database;
-      if (!db || typeof db.get !== 'function') return null;
+      if (!db || typeof db.get !== "function") return null;
 
-      const row = await db.get('SELECT * FROM memory_entries WHERE id = ?', [id]);
+      const row = await db.get("SELECT * FROM memory_entries WHERE id = ?", [
+        id,
+      ]);
       if (!row) return null;
       return this.rowToEntry(row);
     } catch {
@@ -728,14 +756,14 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
     return {
       id,
       key: data.key || id,
-      content: data.content || '',
+      content: data.content || "",
       embedding: data.embedding,
-      type: data.type || 'semantic',
+      type: data.type || "semantic",
       namespace: data.namespace || this.config.namespace,
       tags: data.tags || [],
       metadata: data.metadata || {},
       ownerId: data.ownerId,
-      accessLevel: data.accessLevel || 'private',
+      accessLevel: data.accessLevel || "private",
       createdAt: data.createdAt || now,
       updatedAt: data.updatedAt || now,
       expiresAt: data.expiresAt,
@@ -761,16 +789,16 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
     try {
       // Try native delete method first
-      if (typeof this.agentdb.delete === 'function') {
+      if (typeof this.agentdb.delete === "function") {
         await this.agentdb.delete(id);
         return;
       }
 
       // Fallback to database
       const db = this.agentdb.database;
-      if (!db || typeof db.run !== 'function') return;
+      if (!db || typeof db.run !== "function") return;
 
-      await db.run('DELETE FROM memory_entries WHERE id = ?', [id]);
+      await db.run("DELETE FROM memory_entries WHERE id = ?", [id]);
     } catch {
       // Delete failed - entry removed from in-memory
     }
@@ -781,14 +809,14 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    */
   private async searchWithAgentDB(
     embedding: Float32Array,
-    options: SearchOptions
+    options: SearchOptions,
   ): Promise<SearchResult[]> {
     if (!this.agentdb || !HNSWIndex) {
       return [];
     }
 
     try {
-      const hnsw = this.agentdb.getController('hnsw');
+      const hnsw = this.agentdb.getController("hnsw");
       if (!hnsw) {
         return this.bruteForceSearch(embedding, options);
       }
@@ -813,7 +841,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
       return searchResults;
     } catch (error) {
-      console.error('HNSW search failed:', error);
+      hnswLogger.error("HNSW search failed", error);
       return this.bruteForceSearch(embedding, options);
     }
   }
@@ -823,7 +851,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
    */
   private bruteForceSearch(
     embedding: Float32Array,
-    options: SearchOptions
+    options: SearchOptions,
   ): SearchResult[] {
     const results: SearchResult[] = [];
 
@@ -886,7 +914,7 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
 
     if (query.tags && query.tags.length > 0) {
       results = results.filter((e) =>
-        query.tags!.every((tag) => e.tags.includes(tag))
+        query.tags!.every((tag) => e.tags.includes(tag)),
       );
     }
 
@@ -921,15 +949,15 @@ export class AgentDBBackend extends EventEmitter implements IMemoryBackend {
         : undefined,
       type: row.type,
       namespace: row.namespace,
-      tags: JSON.parse(row.tags || '[]'),
-      metadata: JSON.parse(row.metadata || '{}'),
+      tags: JSON.parse(row.tags || "[]"),
+      metadata: JSON.parse(row.metadata || "{}"),
       ownerId: row.owner_id,
       accessLevel: row.access_level,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       expiresAt: row.expires_at,
       version: row.version,
-      references: JSON.parse(row.references || '[]'),
+      references: JSON.parse(row.references || "[]"),
       accessCount: row.access_count || 0,
       lastAccessedAt: row.last_accessed_at || row.created_at,
     };

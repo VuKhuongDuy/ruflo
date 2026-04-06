@@ -11,6 +11,7 @@
 
 import { platform } from 'node:os';
 import { existsSync } from 'node:fs';
+import { databaseProviderLogger } from './logger.js';
 import {
   IMemoryBackend,
   MemoryEntry,
@@ -136,7 +137,7 @@ async function selectProvider(
 ): Promise<DatabaseProvider> {
   if (preferred && preferred !== 'auto') {
     if (verbose) {
-      console.log(`[DatabaseProvider] Using explicitly specified provider: ${preferred}`);
+      databaseProviderLogger.info(`Using explicitly specified provider: ${preferred}`);
     }
     return preferred;
   }
@@ -144,14 +145,14 @@ async function selectProvider(
   const platformInfo = detectPlatform();
 
   if (verbose) {
-    console.log(`[DatabaseProvider] Platform detected: ${platformInfo.os}`);
-    console.log(`[DatabaseProvider] Recommended provider: ${platformInfo.recommendedProvider}`);
+    databaseProviderLogger.info(`Platform detected: ${platformInfo.os}`);
+    databaseProviderLogger.info(`Recommended provider: ${platformInfo.recommendedProvider}`);
   }
 
   // Try RVF first (always available via pure-TS fallback, native when @ruvector/rvf installed)
   if (await testRvf()) {
     if (verbose) {
-      console.log('[DatabaseProvider] RVF backend available');
+      databaseProviderLogger.info('RVF backend available');
     }
     return 'rvf';
   }
@@ -160,22 +161,22 @@ async function selectProvider(
   if (platformInfo.recommendedProvider === 'better-sqlite3') {
     if (await testBetterSqlite3()) {
       if (verbose) {
-        console.log('[DatabaseProvider] better-sqlite3 available and working');
+        databaseProviderLogger.info('better-sqlite3 available and working');
       }
       return 'better-sqlite3';
     } else if (verbose) {
-      console.log('[DatabaseProvider] better-sqlite3 not available, trying sql.js');
+      databaseProviderLogger.info('better-sqlite3 not available, trying sql.js');
     }
   }
 
   // Try sql.js as fallback
   if (await testSqlJs()) {
     if (verbose) {
-      console.log('[DatabaseProvider] sql.js available and working');
+      databaseProviderLogger.info('sql.js available and working');
     }
     return 'sql.js';
   } else if (verbose) {
-    console.log('[DatabaseProvider] sql.js not available, using JSON fallback');
+    databaseProviderLogger.info('sql.js not available, using JSON fallback');
   }
 
   // Final fallback to JSON
@@ -226,8 +227,8 @@ export async function createDatabase(
   const selectedProvider = await selectProvider(provider, verbose);
 
   if (verbose) {
-    console.log(`[DatabaseProvider] Creating database with provider: ${selectedProvider}`);
-    console.log(`[DatabaseProvider] Database path: ${path}`);
+    databaseProviderLogger.info(`Creating database with provider: ${selectedProvider}`);
+    databaseProviderLogger.info(`Database path: ${path}`);
   }
 
   let backend: IMemoryBackend;
@@ -288,7 +289,7 @@ export async function createDatabase(
   await backend.initialize();
 
   if (verbose) {
-    console.log(`[DatabaseProvider] Database initialized successfully`);
+    databaseProviderLogger.info('Database initialized successfully');
   }
 
   return backend;
@@ -353,11 +354,11 @@ class JsonBackend implements IMemoryBackend {
         }
 
         if (this.verbose) {
-          console.log(`[JsonBackend] Loaded ${this.entries.size} entries from ${this.path}`);
+          databaseProviderLogger.info(`Loaded ${this.entries.size} entries from ${this.path}`);
         }
       } catch (error) {
         if (this.verbose) {
-          console.error('[JsonBackend] Error loading file:', error);
+          databaseProviderLogger.error('Error loading file', error);
         }
       }
     }

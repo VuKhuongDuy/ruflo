@@ -16,7 +16,7 @@ export interface DriftResult {
   distance: number;
   velocity: number;
   acceleration: number;
-  trend: 'stable' | 'drifting' | 'accelerating' | 'recovering';
+  trend: "stable" | "drifting" | "accelerating" | "recovering";
   shouldEscalate: boolean;
   shouldTriggerReasoning: boolean;
 }
@@ -57,6 +57,8 @@ export interface SubstrateHealth {
   uptime: number;
 }
 
+import { neuralIntegrationLogger } from "./logger.js";
+
 export interface NeuralSubstrateConfig {
   dimension?: number;
   driftThreshold?: number;
@@ -82,12 +84,14 @@ export class NeuralEmbeddingService {
     if (this.initialized) return this.available;
 
     try {
-      const { getNeuralSubstrate } = await import('agentic-flow/embeddings');
+      const { getNeuralSubstrate } = await import("agentic-flow/embeddings");
       this.substrate = await getNeuralSubstrate(this.config);
       await this.substrate.init();
       this.available = true;
     } catch (error) {
-      console.warn('[neural] Neural substrate not available:', error instanceof Error ? error.message : error);
+      neuralIntegrationLogger.warn("Neural substrate not available", {
+        reason: error instanceof Error ? error.message : String(error),
+      });
       this.available = false;
     }
 
@@ -106,6 +110,7 @@ export class NeuralEmbeddingService {
    * Detect semantic drift from baseline
    */
   async detectDrift(input: string): Promise<DriftResult | null> {
+    neuralIntegrationLogger.info("Neutral detectDrift");
     if (!this.available || !this.substrate) return null;
     return this.substrate.drift.detect(input);
   }
@@ -114,6 +119,7 @@ export class NeuralEmbeddingService {
    * Set baseline for drift detection
    */
   async setDriftBaseline(context: string): Promise<void> {
+    neuralIntegrationLogger.info("Neutral setDriftBaseline");
     if (!this.available || !this.substrate) return;
     await this.substrate.drift.setBaseline(context);
   }
@@ -121,7 +127,13 @@ export class NeuralEmbeddingService {
   /**
    * Store memory with interference detection
    */
-  async storeMemory(id: string, content: string): Promise<{ stored: boolean; interference: string[] } | null> {
+  async storeMemory(
+    id: string,
+    content: string,
+  ): Promise<{ stored: boolean; interference: string[] } | null> {
+    neuralIntegrationLogger.info(
+      `Neutral storeMemory with id ${id} and content ${content}`,
+    );
     if (!this.available || !this.substrate) return null;
     return this.substrate.memory.store(id, content);
   }
@@ -129,7 +141,13 @@ export class NeuralEmbeddingService {
   /**
    * Recall memories by similarity
    */
-  async recallMemories(query: string, topK = 5): Promise<Array<MemoryEntry & { relevance: number }> | null> {
+  async recallMemories(
+    query: string,
+    topK = 5,
+  ): Promise<Array<MemoryEntry & { relevance: number }> | null> {
+    neuralIntegrationLogger.info(
+      `Neutral recallMemories with query ${query} and topK ${topK}`,
+    );
     if (!this.available || !this.substrate) return null;
     return this.substrate.memory.recall(query, topK);
   }
@@ -137,7 +155,12 @@ export class NeuralEmbeddingService {
   /**
    * Consolidate memories (merge similar, forget weak)
    */
-  consolidateMemories(): { merged: number; forgotten: number; remaining: number } | null {
+  consolidateMemories(): {
+    merged: number;
+    forgotten: number;
+    remaining: number;
+  } | null {
+    neuralIntegrationLogger.info(`Neutral consolidateMemories`);
     if (!this.available || !this.substrate) return null;
     return this.substrate.memory.consolidate();
   }
@@ -153,11 +176,17 @@ export class NeuralEmbeddingService {
   /**
    * Update agent state based on observation
    */
-  async updateAgentState(agentId: string, observation: string): Promise<{
+  async updateAgentState(
+    agentId: string,
+    observation: string,
+  ): Promise<{
     newState: AgentState;
     nearestRegion: string;
     regionProximity: number;
   } | null> {
+    neuralIntegrationLogger.info(
+      `Neutral updateAgentState with agentId ${agentId} and observation ${observation}`,
+    );
     if (!this.available || !this.substrate) return null;
     return this.substrate.states.updateState(agentId, observation);
   }
@@ -166,6 +195,9 @@ export class NeuralEmbeddingService {
    * Get agent state
    */
   getAgentState(agentId: string): AgentState | null {
+    neuralIntegrationLogger.info(
+      `Neutral getAgentState with agentId ${agentId}`,
+    );
     if (!this.available || !this.substrate) return null;
     return this.substrate.states.getAgent(agentId);
   }
@@ -194,7 +226,9 @@ export class NeuralEmbeddingService {
   /**
    * Calibrate coherence monitor
    */
-  async calibrateCoherence(goodOutputs: string[]): Promise<{ calibrated: boolean; sampleCount: number } | null> {
+  async calibrateCoherence(
+    goodOutputs: string[],
+  ): Promise<{ calibrated: boolean; sampleCount: number } | null> {
     if (!this.available || !this.substrate) return null;
     return this.substrate.coherence.calibrate(goodOutputs);
   }
@@ -210,11 +244,14 @@ export class NeuralEmbeddingService {
   /**
    * Process input through full neural substrate
    */
-  async process(input: string, context?: {
-    agentId?: string;
-    memoryId?: string;
-    checkCoherence?: boolean;
-  }): Promise<{
+  async process(
+    input: string,
+    context?: {
+      agentId?: string;
+      memoryId?: string;
+      checkCoherence?: boolean;
+    },
+  ): Promise<{
     drift: DriftResult;
     state?: { nearestRegion: string; regionProximity: number };
     coherence?: CoherenceResult;
@@ -235,7 +272,9 @@ export class NeuralEmbeddingService {
   /**
    * Full consolidation pass
    */
-  consolidate(): { memory: { merged: number; forgotten: number; remaining: number } } | null {
+  consolidate(): {
+    memory: { merged: number; forgotten: number; remaining: number };
+  } | null {
     if (!this.available || !this.substrate) return null;
     return this.substrate.consolidate();
   }
@@ -244,7 +283,9 @@ export class NeuralEmbeddingService {
 /**
  * Create neural embedding service
  */
-export function createNeuralService(config: NeuralSubstrateConfig = {}): NeuralEmbeddingService {
+export function createNeuralService(
+  config: NeuralSubstrateConfig = {},
+): NeuralEmbeddingService {
   return new NeuralEmbeddingService(config);
 }
 
@@ -253,7 +294,7 @@ export function createNeuralService(config: NeuralSubstrateConfig = {}): NeuralE
  */
 export async function isNeuralAvailable(): Promise<boolean> {
   try {
-    await import('agentic-flow/embeddings');
+    await import("agentic-flow/embeddings");
     return true;
   } catch {
     return false;
@@ -263,21 +304,35 @@ export async function isNeuralAvailable(): Promise<boolean> {
 /**
  * List available ONNX embedding models
  */
-export async function listEmbeddingModels(): Promise<Array<{
-  id: string;
-  dimension: number;
-  size: string;
-  quantized: boolean;
-  downloaded: boolean;
-}>> {
+export async function listEmbeddingModels(): Promise<
+  Array<{
+    id: string;
+    dimension: number;
+    size: string;
+    quantized: boolean;
+    downloaded: boolean;
+  }>
+> {
   try {
-    const { listAvailableModels } = await import('agentic-flow/embeddings');
+    const { listAvailableModels } = await import("agentic-flow/embeddings");
     return listAvailableModels();
   } catch {
     // Return default models if agentic-flow not available
     return [
-      { id: 'all-MiniLM-L6-v2', dimension: 384, size: '23MB', quantized: false, downloaded: false },
-      { id: 'all-mpnet-base-v2', dimension: 768, size: '110MB', quantized: false, downloaded: false },
+      {
+        id: "all-MiniLM-L6-v2",
+        dimension: 384,
+        size: "23MB",
+        quantized: false,
+        downloaded: false,
+      },
+      {
+        id: "all-mpnet-base-v2",
+        dimension: 768,
+        size: "110MB",
+        quantized: false,
+        downloaded: false,
+      },
     ];
   }
 }
@@ -288,8 +343,12 @@ export async function listEmbeddingModels(): Promise<Array<{
 export async function downloadEmbeddingModel(
   modelId: string,
   targetDir?: string,
-  onProgress?: (progress: { percent: number; bytesDownloaded: number; totalBytes: number }) => void
+  onProgress?: (progress: {
+    percent: number;
+    bytesDownloaded: number;
+    totalBytes: number;
+  }) => void,
 ): Promise<string> {
-  const { downloadModel } = await import('agentic-flow/embeddings');
-  return downloadModel(modelId, targetDir ?? '.models', onProgress);
+  const { downloadModel } = await import("agentic-flow/embeddings");
+  return downloadModel(modelId, targetDir ?? ".models", onProgress);
 }

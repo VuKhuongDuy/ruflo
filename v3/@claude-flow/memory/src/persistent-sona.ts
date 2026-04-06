@@ -21,6 +21,9 @@ import type {
   EwcRecord,
   TrajectoryRecord,
 } from './rvf-learning-store.js';
+import { memoryLogger } from './logger.js';
+
+const persistentSonaLogger = memoryLogger.child('persistent-sona');
 
 // ===== Types =====
 
@@ -432,8 +435,7 @@ export class PersistentSonaCoordinator {
 
   private log(message: string): void {
     if (this.verbose) {
-      // eslint-disable-next-line no-console
-      console.log(`[PersistentSona] ${message}`);
+      persistentSonaLogger.info(message);
     }
   }
 }

@@ -36,12 +36,12 @@ const __dirname = dirname(__filename);
  * MCP Server configuration
  */
 export interface MCPServerOptions {
-  transport?: 'stdio' | 'http' | 'websocket';
+  transport?: "stdio" | "http" | "websocket";
   host?: string;
   port?: number;
   pidFile?: string;
   logFile?: string;
-  tools?: string[] | 'all';
+  tools?: string[] | "all";
   daemonize?: boolean;
   timeout?: number;
 }
@@ -69,12 +69,12 @@ export interface MCPServerStatus {
  * Default configuration
  */
 const DEFAULT_OPTIONS: Required<MCPServerOptions> = {
-  transport: 'stdio',
-  host: 'localhost',
+  transport: "stdio",
+  host: "localhost",
   port: 3000,
-  pidFile: path.join(os.tmpdir(), 'claude-flow-mcp.pid'),
-  logFile: path.join(os.tmpdir(), 'claude-flow-mcp.log'),
-  tools: 'all',
+  pidFile: path.join(os.tmpdir(), "claude-flow-mcp.pid"),
+  logFile: path.join(os.tmpdir(), "claude-flow-mcp.log"),
+  tools: "all",
   daemonize: false,
   timeout: 30000,
 };
@@ -111,10 +111,10 @@ export class MCPServerManager extends EventEmitter {
     const startTime = performance.now();
     this.startTime = new Date();
 
-    this.emit('starting', { options: this.options });
+    this.emit("starting", { options: this.options });
 
     try {
-      if (this.options.transport === 'stdio') {
+      if (this.options.transport === "stdio") {
         // For stdio transport, spawn the server process
         await this.startStdioServer();
       } else {
@@ -132,14 +132,14 @@ export class MCPServerManager extends EventEmitter {
 
       const finalStatus = await this.getStatus();
 
-      this.emit('started', {
+      this.emit("started", {
         ...finalStatus,
         startupTime: duration,
       });
 
       return finalStatus;
     } catch (error) {
-      this.emit('error', error);
+      this.emit("error", error);
       throw error;
     }
   }
@@ -154,7 +154,7 @@ export class MCPServerManager extends EventEmitter {
       return;
     }
 
-    this.emit('stopping', { force });
+    this.emit("stopping", { force });
 
     try {
       // Stop health monitoring
@@ -166,13 +166,13 @@ export class MCPServerManager extends EventEmitter {
       if (this.process) {
         // Graceful shutdown
         if (!force) {
-          this.process.kill('SIGTERM');
+          this.process.kill("SIGTERM");
           await this.waitForExit(5000);
         }
 
         // Force kill if still running
         if (this.process && !this.process.killed) {
-          this.process.kill('SIGKILL');
+          this.process.kill("SIGKILL");
         }
 
         this.process = undefined;
@@ -189,9 +189,9 @@ export class MCPServerManager extends EventEmitter {
       await this.removePidFile();
 
       this.startTime = undefined;
-      this.emit('stopped');
+      this.emit("stopped");
     } catch (error) {
-      this.emit('error', error);
+      this.emit("error", error);
       throw error;
     }
   }
@@ -245,7 +245,7 @@ export class MCPServerManager extends EventEmitter {
     };
 
     // Get health status for HTTP transport
-    if (this.options.transport !== 'stdio') {
+    if (this.options.transport !== "stdio") {
       status.health = await this.checkHealth();
     }
 
@@ -260,16 +260,19 @@ export class MCPServerManager extends EventEmitter {
     error?: string;
     metrics?: Record<string, number>;
   }> {
-    if (this.options.transport === 'stdio') {
+    if (this.options.transport === "stdio") {
       // For stdio, check if process is running
       const pid = await this.readPidFile();
       if (pid === null) {
-        return { healthy: false, error: 'No PID file found' };
+        return { healthy: false, error: "No PID file found" };
       }
       if (!this.isProcessRunning(pid)) {
         // Clean up stale PID file
         await this.removePidFile();
-        return { healthy: false, error: 'Process not running (cleaned up stale PID)' };
+        return {
+          healthy: false,
+          error: "Process not running (cleaned up stale PID)",
+        };
       }
       return { healthy: true };
     }
@@ -278,12 +281,12 @@ export class MCPServerManager extends EventEmitter {
     try {
       const response = await this.httpRequest(
         `http://${this.options.host}:${this.options.port}/health`,
-        'GET',
-        this.options.timeout
+        "GET",
+        this.options.timeout,
       );
 
       return {
-        healthy: response.status === 'ok',
+        healthy: response.status === "ok",
         metrics: {
           connections: response.connections || 0,
         },
@@ -291,7 +294,7 @@ export class MCPServerManager extends EventEmitter {
     } catch (error) {
       return {
         healthy: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: error instanceof Error ? error.message : "Unknown error",
       };
     }
   }
@@ -310,14 +313,27 @@ export class MCPServerManager extends EventEmitter {
    */
   private async startStdioServer(): Promise<void> {
     // Import the tool registry
-    const { listMCPTools, callMCPTool, hasTool } = await import('./mcp-client.js');
+    const { listMCPTools, callMCPTool, hasTool } =
+      await import("./mcp-client.js");
 
-    const VERSION = '3.0.0';
+    const VERSION = "3.0.0";
     const sessionId = `mcp-${Date.now()}-${randomUUID().slice(0, 8)}`;
 
     // Log to stderr to not corrupt stdout
     console.error(
-      `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Starting in stdio mode`
+      `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Starting in stdio_ mode`,
+    );
+    console.error(
+      JSON.stringify({
+        arch: process.arch,
+        mode: "mcp-stdio",
+        nodeVersion: process.version,
+        pid: process.pid,
+        platform: process.platform,
+        protocol: "stdio",
+        sessionId,
+        version: VERSION,
+      }),
     );
 
     // Auto-initialize memory database before tools are registered (#1524)
@@ -364,26 +380,28 @@ export class MCPServerManager extends EventEmitter {
     }));
 
     // Send server initialization notification
-    console.log(JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'server.initialized',
-      params: {
-        serverInfo: {
-          name: 'ruflo',
-          version: VERSION,
-          capabilities: {
-            tools: { listChanged: true },
-            resources: { subscribe: true, listChanged: true },
+    console.log(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        method: "server.initialized",
+        params: {
+          serverInfo: {
+            name: "ruflo",
+            version: VERSION,
+            capabilities: {
+              tools: { listChanged: true },
+              resources: { subscribe: true, listChanged: true },
+            },
           },
         },
-      },
-    }));
+      }),
+    );
 
     // Handle stdin messages (S-5: bounded buffer to prevent OOM)
     const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
-    let buffer = '';
+    let buffer = "";
 
-    process.stdin.on('data', async (chunk) => {
+    process.stdin.on("data", async (chunk) => {
       buffer += chunk.toString();
 
       if (buffer.length > MAX_BUFFER_SIZE) {
@@ -399,8 +417,8 @@ export class MCPServerManager extends EventEmitter {
       }
 
       // Process complete JSON messages
-      let lines = buffer.split('\n');
-      buffer = lines.pop() || ''; // Keep incomplete line in buffer
+      let lines = buffer.split("\n");
+      buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
       for (const line of lines) {
         if (line.trim()) {
@@ -413,53 +431,64 @@ export class MCPServerManager extends EventEmitter {
           } catch (error) {
             console.error(
               `[${new Date().toISOString()}] ERROR [claude-flow-mcp] Failed to parse message:`,
-              error instanceof Error ? error.message : String(error)
+              error instanceof Error ? error.message : String(error),
             );
           }
         }
       }
     });
 
-    process.stdin.on('end', () => {
+    process.stdin.on("end", () => {
       console.error(
-        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) stdin closed, shutting down...`
+        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) stdin closed, shutting down...`,
       );
       process.exit(0);
     });
 
     // Handle process termination
-    process.on('SIGINT', () => {
+    process.on("SIGINT", () => {
       console.error(
-        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Received SIGINT, shutting down...`
+        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Received SIGINT, shutting down...`,
       );
       process.exit(0);
     });
 
-    process.on('SIGTERM', () => {
+    process.on("SIGTERM", () => {
       console.error(
-        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Received SIGTERM, shutting down...`
+        `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Received SIGTERM, shutting down...`,
       );
       process.exit(0);
     });
 
     // Mark as ready immediately for stdio
-    this.emit('ready');
+    this.emit("ready");
   }
 
   /**
    * Handle incoming MCP message
    */
   private async handleMCPMessage(
-    message: { jsonrpc: string; id?: string | number; method?: string; params?: unknown },
-    sessionId: string
-  ): Promise<{ jsonrpc: string; id?: string | number; result?: unknown; error?: { code: number; message: string } } | null> {
-    const { listMCPTools, callMCPTool, hasTool } = await import('./mcp-client.js');
+    message: {
+      jsonrpc: string;
+      id?: string | number;
+      method?: string;
+      params?: unknown;
+    },
+    sessionId: string,
+  ): Promise<{
+    jsonrpc: string;
+    id?: string | number;
+    result?: unknown;
+    error?: { code: number; message: string };
+  } | null> {
+    const { listMCPTools, callMCPTool, hasTool } =
+      await import("./mcp-client.js");
 
     if (!message.method) {
       return {
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: message.id,
-        error: { code: -32600, message: 'Invalid Request: missing method' },
+        error: { code: -32600, message: "Invalid Request: missing method" },
       };
     }
 
@@ -467,13 +496,13 @@ export class MCPServerManager extends EventEmitter {
 
     try {
       switch (message.method) {
-        case 'initialize':
+        case "initialize":
           return {
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id: message.id,
             result: {
-              protocolVersion: '2024-11-05',
-              serverInfo: { name: 'ruflo', version: '3.0.0' },
+              protocolVersion: "2024-11-05",
+              serverInfo: { name: "ruflo", version: "3.0.0" },
               capabilities: {
                 tools: { listChanged: true },
                 resources: { subscribe: true, listChanged: true },
@@ -481,13 +510,13 @@ export class MCPServerManager extends EventEmitter {
             },
           };
 
-        case 'tools/list':
+        case "tools/list":
           const tools = listMCPTools();
           return {
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id: message.id,
             result: {
-              tools: tools.map(tool => ({
+              tools: tools.map((tool) => ({
                 name: tool.name,
                 description: tool.description,
                 inputSchema: tool.inputSchema,
@@ -495,13 +524,16 @@ export class MCPServerManager extends EventEmitter {
             },
           };
 
-        case 'tools/call':
+        case "tools/call":
           const toolName = params.name as string;
-          const toolParams = (params.arguments || {}) as Record<string, unknown>;
+          const toolParams = (params.arguments || {}) as Record<
+            string,
+            unknown
+          >;
 
           if (!hasTool(toolName)) {
             return {
-              jsonrpc: '2.0',
+              jsonrpc: "2.0",
               id: message.id,
               error: { code: -32601, message: `Tool not found: ${toolName}` },
             };
@@ -511,54 +543,64 @@ export class MCPServerManager extends EventEmitter {
             const result = await callMCPTool(toolName, toolParams, { sessionId });
             trackRequest(toolName, true);
             return {
-              jsonrpc: '2.0',
+              jsonrpc: "2.0",
               id: message.id,
-              result: { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] },
+              result: {
+                content: [
+                  { type: "text", text: JSON.stringify(result, null, 2) },
+                ],
+              },
             };
           } catch (error) {
             trackRequest(toolName, false);
             return {
-              jsonrpc: '2.0',
+              jsonrpc: "2.0",
               id: message.id,
               error: {
                 code: -32603,
-                message: error instanceof Error ? error.message : 'Tool execution failed',
+                message:
+                  error instanceof Error
+                    ? error.message
+                    : "Tool execution failed",
               },
             };
           }
 
-        case 'notifications/initialized':
+        case "notifications/initialized":
           // Client notification - no response needed
           console.error(
-            `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Client initialized`
+            `[${new Date().toISOString()}] INFO [claude-flow-mcp] (${sessionId}) Client initialized`,
           );
           return null;
 
-        case 'ping':
+        case "ping":
           return {
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id: message.id,
             result: {},
           };
 
         default:
           return {
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id: message.id,
-            error: { code: -32601, message: `Method not found: ${message.method}` },
+            error: {
+              code: -32601,
+              message: `Method not found: ${message.method}`,
+            },
           };
       }
     } catch (error) {
       console.error(
         `[${new Date().toISOString()}] ERROR [claude-flow-mcp] Error handling ${message.method}:`,
-        error
+        error,
       );
       return {
-        jsonrpc: '2.0',
+        jsonrpc: "2.0",
         id: message.id,
         error: {
           code: -32603,
-          message: error instanceof Error ? error.message : 'Internal error',
+          message: error instanceof Error ? error.message : "Internal error",
         },
       };
     }
@@ -570,26 +612,30 @@ export class MCPServerManager extends EventEmitter {
   private async startHttpServer(): Promise<void> {
     // Dynamically import the MCP server package
     // FIX for issue #942: Use proper package import instead of broken relative path
-    const { createMCPServer } = await import('@claude-flow/mcp');
+    const { createMCPServer } = await import("@claude-flow/mcp");
 
     const logger = {
-      debug: (msg: string, data?: unknown) => this.emit('log', { level: 'debug', msg, data }),
-      info: (msg: string, data?: unknown) => this.emit('log', { level: 'info', msg, data }),
-      warn: (msg: string, data?: unknown) => this.emit('log', { level: 'warn', msg, data }),
-      error: (msg: string, data?: unknown) => this.emit('log', { level: 'error', msg, data }),
+      debug: (msg: string, data?: unknown) =>
+        this.emit("log", { level: "debug", msg, data }),
+      info: (msg: string, data?: unknown) =>
+        this.emit("log", { level: "info", msg, data }),
+      warn: (msg: string, data?: unknown) =>
+        this.emit("log", { level: "warn", msg, data }),
+      error: (msg: string, data?: unknown) =>
+        this.emit("log", { level: "error", msg, data }),
     };
 
     const mcpServer = createMCPServer(
       {
-        name: 'Claude-Flow MCP Server V3',
-        version: '3.0.0',
-        transport: this.options.transport as 'http' | 'websocket',
+        name: "Claude-Flow MCP Server V3",
+        version: "3.0.0",
+        transport: this.options.transport as "http" | "websocket",
         host: this.options.host,
         port: this.options.port,
         enableMetrics: true,
         enableCaching: true,
       },
-      logger
+      logger,
     );
 
     await mcpServer.start();
@@ -603,7 +649,7 @@ export class MCPServerManager extends EventEmitter {
    */
   private async waitForReady(timeout = 10000): Promise<void> {
     // For stdio transport, we're ready immediately (in-process)
-    if (this.options.transport === 'stdio') {
+    if (this.options.transport === "stdio") {
       return;
     }
 
@@ -617,7 +663,7 @@ export class MCPServerManager extends EventEmitter {
       await this.sleep(100);
     }
 
-    throw new Error('Server failed to start within timeout');
+    throw new Error("Server failed to start within timeout");
   }
 
   /**
@@ -631,7 +677,7 @@ export class MCPServerManager extends EventEmitter {
         resolve();
       }, timeout);
 
-      this.process!.once('exit', () => {
+      this.process!.once("exit", () => {
         clearTimeout(timer);
         resolve();
       });
@@ -645,13 +691,13 @@ export class MCPServerManager extends EventEmitter {
     this.healthCheckInterval = setInterval(async () => {
       try {
         const health = await this.checkHealth();
-        this.emit('health', health);
+        this.emit("health", health);
 
         if (!health.healthy) {
-          this.emit('unhealthy', health);
+          this.emit("unhealthy", health);
         }
       } catch (error) {
-        this.emit('health-error', error);
+        this.emit("health-error", error);
       }
     }, 30000);
     this.healthCheckInterval.unref();
@@ -662,7 +708,7 @@ export class MCPServerManager extends EventEmitter {
    */
   private async writePidFile(): Promise<void> {
     const pid = this.process?.pid || process.pid;
-    await fs.promises.writeFile(this.options.pidFile, String(pid), 'utf8');
+    await fs.promises.writeFile(this.options.pidFile, String(pid), "utf8");
   }
 
   /**
@@ -670,7 +716,7 @@ export class MCPServerManager extends EventEmitter {
    */
   private async readPidFile(): Promise<number | null> {
     try {
-      const content = await fs.promises.readFile(this.options.pidFile, 'utf8');
+      const content = await fs.promises.readFile(this.options.pidFile, "utf8");
       const pid = parseInt(content.trim(), 10);
       return isNaN(pid) ? null : pid;
     } catch {
@@ -731,11 +777,11 @@ export class MCPServerManager extends EventEmitter {
   private async httpRequest(
     url: string,
     method: string,
-    timeout: number
+    timeout: number,
   ): Promise<any> {
     return new Promise((resolve, reject) => {
       const urlObj = new URL(url);
-      const http = require('http');
+      const http = require("http");
 
       const req = http.request(
         {
@@ -746,24 +792,24 @@ export class MCPServerManager extends EventEmitter {
           timeout,
         },
         (res: any) => {
-          let data = '';
-          res.on('data', (chunk: string) => {
+          let data = "";
+          res.on("data", (chunk: string) => {
             data += chunk;
           });
-          res.on('end', () => {
+          res.on("end", () => {
             try {
               resolve(JSON.parse(data));
             } catch {
-              resolve({ status: res.statusCode === 200 ? 'ok' : 'error' });
+              resolve({ status: res.statusCode === 200 ? "ok" : "error" });
             }
           });
-        }
+        },
       );
 
-      req.on('error', reject);
-      req.on('timeout', () => {
+      req.on("error", reject);
+      req.on("timeout", () => {
         req.destroy();
-        reject(new Error('Request timeout'));
+        reject(new Error("Request timeout"));
       });
 
       req.end();
@@ -782,7 +828,7 @@ export class MCPServerManager extends EventEmitter {
  * Create MCP server manager
  */
 export function createMCPServerManager(
-  options?: MCPServerOptions
+  options?: MCPServerOptions,
 ): MCPServerManager {
   return new MCPServerManager(options);
 }
@@ -799,13 +845,15 @@ let currentTransport: string | undefined = undefined;
  * FIX for issue #942: Recreate singleton if transport type changes
  * Previously, once created with stdio (default), HTTP options were ignored
  */
-export function getServerManager(
-  options?: MCPServerOptions
-): MCPServerManager {
+export function getServerManager(options?: MCPServerOptions): MCPServerManager {
   const requestedTransport = options?.transport;
 
   // Recreate if transport type changes (fixes HTTP transport not working)
-  if (serverManager && requestedTransport && requestedTransport !== currentTransport) {
+  if (
+    serverManager &&
+    requestedTransport &&
+    requestedTransport !== currentTransport
+  ) {
     serverManager = new MCPServerManager(options);
     currentTransport = requestedTransport;
   }
@@ -821,7 +869,7 @@ export function getServerManager(
  * Quick start MCP server
  */
 export async function startMCPServer(
-  options?: MCPServerOptions
+  options?: MCPServerOptions,
 ): Promise<MCPServerStatus> {
   const manager = getServerManager(options);
   return await manager.start();

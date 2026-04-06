@@ -12,6 +12,7 @@
  */
 
 import type { Trajectory, RLConfig } from '../types.js';
+import { algorithmLogger } from '../logger.js';
 
 /**
  * Q-Learning configuration
@@ -158,7 +159,7 @@ export class QLearning {
 
     const elapsed = performance.now() - startTime;
     if (elapsed > 1) {
-      console.warn(`Q-learning update exceeded target: ${elapsed.toFixed(2)}ms > 1ms`);
+      algorithmLogger.warn(`Q-learning update exceeded target: ${elapsed.toFixed(2)}ms > 1ms`);
     }
 
     return { tdError: this.avgTDError };

@@ -34,6 +34,7 @@ import type {
 import { normalize } from './normalization.js';
 import { PersistentEmbeddingCache } from './persistent-cache.js';
 import { RvfEmbeddingService } from './rvf-embedding-service.js';
+import { embeddingsLogger, providerLogger } from './logger.js';
 
 // ============================================================================
 // LRU Cache Implementation
@@ -159,7 +160,7 @@ abstract class BaseEmbeddingService extends EventEmitter implements IEmbeddingSe
       try {
         listener(event);
       } catch (error) {
-        console.error('Error in embedding event listener:', error);
+        embeddingsLogger.error('Error in embedding event listener', error);
       }
     }
     this.emit(event.type, event);
@@ -847,17 +848,17 @@ async function autoInstallAgenticFlow(): Promise<boolean> {
       return true;
     }
 
-    console.log('[embeddings] Installing agentic-flow@alpha...');
+    providerLogger.info('Installing agentic-flow@alpha...');
     await execAsync('npm install agentic-flow@alpha --save', { timeout: 120000 });
 
     // Initialize the model
-    console.log('[embeddings] Downloading embedding model...');
+    providerLogger.info('Downloading embedding model...');
     await execAsync('npx agentic-flow@alpha embeddings init', { timeout: 300000 });
 
     // Verify installation
     return await isAgenticFlowAvailable();
   } catch (error) {
-    console.warn('[embeddings] Auto-install failed:', error instanceof Error ? error.message : error);
+    providerLogger.warn('Auto-install failed', { reason: error instanceof Error ? error.message : String(error) });
     return false;
   }
 }
@@ -879,7 +880,7 @@ export function createEmbeddingService(config: EmbeddingConfig): IEmbeddingServi
     case 'rvf':
       return new RvfEmbeddingService(config as RvfEmbeddingConfig);
     default:
-      console.warn(`Unknown provider, using mock`);
+      providerLogger.warn('Unknown provider, using mock');
       return new MockEmbeddingService({ provider: 'mock', dimensions: 384 });
   }
 }
@@ -981,7 +982,7 @@ export async function createEmbeddingServiceAsync(
     }
 
     // Fallback to mock (always works)
-    console.warn('[embeddings] Using mock provider - install agentic-flow or @xenova/transformers for real embeddings');
+    providerLogger.warn('Using mock provider - install agentic-flow or @xenova/transformers for real embeddings');
     return new MockEmbeddingService({
       dimensions: rest.dimensions ?? 384,
       cacheSize: rest.cacheSize,
@@ -1040,7 +1041,7 @@ export async function createEmbeddingServiceAsync(
     }
 
     // Try fallback
-    console.warn(`[embeddings] Primary provider '${provider}' failed, using fallback '${fallback}'`);
+    providerLogger.warn(`Primary provider '${provider}' failed, using fallback '${fallback}'`);
     const fallbackConfig: AutoEmbeddingConfig = { ...rest, provider: fallback };
     return createEmbeddingServiceAsync(fallbackConfig);
   }
