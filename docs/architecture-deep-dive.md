@@ -1,6 +1,8 @@
-# Ruflo v3 — Kiến Trúc Kỹ Thuật Chuyên Sâu
+# Ruflo v3.5 — Kiến Trúc Kỹ Thuật Chuyên Sâu
 
-> Tài liệu này giải thích 5 hệ thống cốt lõi của Ruflo v3: **MCP**, **Neural/SONA**, **Embeddings**, **Memory**, và **Hooks**. Mỗi phần mô tả mục đích, thuật toán, và cách chúng phối hợp với nhau.
+> **Phiên bản**: v3.5.72 (07/04/2026) — 119 commits kể từ v3.5.3 (01/03/2026)
+>
+> Tài liệu này giải thích các hệ thống cốt lõi của Ruflo v3.5: **MCP**, **Neural/SONA**, **Embeddings**, **Memory**, **Hooks**, và các cải tiến mới: **BM25 Hybrid Search**, **DiskANN**, **File Watcher**, **Memory Bridge**. Mỗi phần mô tả mục đích, thuật toán, và cách chúng phối hợp với nhau.
 
 ---
 
@@ -14,6 +16,9 @@
 6. [Hooks — Vòng Đời Sự Kiện](#6-hooks--vòng-đời-sự-kiện)
 7. [Luồng Dữ Liệu Tổng Hợp](#7-luồng-dữ-liệu-tổng-hợp)
 8. [Bảng Thuật Toán Tổng Hợp](#8-bảng-thuật-toán-tổng-hợp)
+9. [Claude CLI Mặc Định vs Ruflo v3.5](#9-claude-cli-mặc-định-vs-ruflo-v35)
+10. [Agents & Swarm — Cách Hoạt Động](#10-agents--swarm--cách-hoạt-động)
+11. [Changelog: Cải Tiến Từ 01/03/2026 → 07/04/2026](#11-changelog-cải-tiến-từ-01032026--07042026)
 
 ---
 
@@ -21,14 +26,14 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                         RUFLO v3 ARCHITECTURE                        │
+│                       RUFLO v3.5 ARCHITECTURE                        │
 ├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │◊
+│                                                                      │
 │   User / Claude Code                                                 │
 │        │                                                             │
 │        ▼                                                             │
 │   ┌─────────┐    JSON-RPC 2.0     ┌──────────────────────────────┐  │
-│   │   CLI   │◄──────────────────►│     MCP Server (215 tools)   │  │
+│   │   CLI   │◄──────────────────►│    MCP Server (259+ tools)   │  │
 │   └─────────┘                    └──────────┬───────────────────┘  │
 │        │                                    │                       │
 │        │           ┌────────────────────────┼────────────────────┐  │
@@ -42,10 +47,11 @@
 │        └───────────┼──────────────────────┘                      │  │
 │                    │                                              │  │
 │                    ▼                                              │  │
-│             ┌────────────┐                                        │  │
-│             │ Embeddings │  ← Cung cấp vector cho tất cả         │  │
-│             │  Service   │                                        │  │
-│             └────────────┘                                        │  │
+│   ┌────────────┐  ┌────────────┐  ┌──────────────┐               │  │
+│   │ Embeddings │  │ File       │  │ Memory       │  ← MỚI v3.5  │  │
+│   │  Service   │  │ Watcher    │  │ Bridge       │               │  │
+│   └────────────┘  └────────────┘  │(Claude↔AgentDB)│             │  │
+│                                   └──────────────┘               │  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -53,12 +59,14 @@ Các package chính và vị trí:
 
 | Package | Đường dẫn | Mục đích |
 |---------|-----------|---------|
-| `@claude-flow/cli` | `v3/@claude-flow/cli/` | CLI + MCP server (215 tools) |
+| `@claude-flow/cli` | `v3/@claude-flow/cli/` | CLI + MCP server (259+ tools) |
 | `@claude-flow/embeddings` | `v3/@claude-flow/embeddings/` | Chuyển text → vector |
-| `@claude-flow/memory` | `v3/@claude-flow/memory/` | Lưu trữ + tìm kiếm ngữ nghĩa |
+| `@claude-flow/memory` | `v3/@claude-flow/memory/` | Lưu trữ + tìm kiếm ngữ nghĩa (HNSW + BM25 + DiskANN) |
 | `@claude-flow/neural` | `v3/@claude-flow/neural/` (trong CLI) | Học từ kinh nghiệm (SONA) |
 | `@claude-flow/hooks` | `v3/@claude-flow/hooks/` | Sự kiện vòng đời |
 | `@claude-flow/security` | `v3/@claude-flow/security/` | Bảo mật, validation |
+| `@claude-flow/guidance` | `v3/@claude-flow/guidance/` | Governance control plane (MỚI v3.5) |
+| `@claude-flow/codex` | `v3/@claude-flow/codex/` | Dual-mode Claude + Codex collaboration (MỚI v3.5) |
 
 ---
 
@@ -66,7 +74,7 @@ Các package chính và vị trí:
 
 ### MCP là gì?
 
-MCP là giao thức cho phép Claude Code gọi các **công cụ bên ngoài** một cách chuẩn hóa. Thay vì hardcode logic vào Claude, MCP tạo ra một "hộp công cụ" gồm 215+ tools mà Claude có thể gọi theo yêu cầu.
+MCP là giao thức cho phép Claude Code gọi các **công cụ bên ngoài** một cách chuẩn hóa. Thay vì hardcode logic vào Claude, MCP tạo ra một "hộp công cụ" gồm 259+ tools mà Claude có thể gọi theo yêu cầu.
 
 ### Giao thức JSON-RPC 2.0
 
@@ -114,7 +122,7 @@ interface MCPTool {
   handler: (input) => Promise<Result>;
 }
 
-// 215 tools được phân nhóm:
+// 259+ tools được phân nhóm:
 const TOOL_REGISTRY = {
   // Agent tools: spawn, list, stop, metrics
   // Swarm tools: init, coordinate, status
@@ -133,6 +141,14 @@ const TOOL_REGISTRY = {
 | Health check | <10ms | Ping mỗi 30 giây |
 | Tool response | <100ms | Mỗi lần Claude gọi tool |
 | Graceful shutdown | <5s | SIGTERM → SIGKILL nếu quá 5s |
+
+### Cải Tiến MCP v3.5
+
+- **259+ tools** (tăng từ 215): thêm memory bridge, guidance, analytics, file watcher tools
+- **Self-detection fix**: MCP server không còn tự kill chính nó khi startup (bug #1381)
+- **Stale PID protection**: Tránh false positives từ PID cũ
+- **Guidance tools** (MỚI): `guidance_discover` cho capability discovery và navigation
+- **stdio transport fix**: Self-detection chính xác cho stdio mode
 
 ---
 
@@ -290,18 +306,23 @@ Session 5: Agent hỏi "authentication patterns?"
            → Tìm ra "OAuth pattern X" từ session 1!
 ```
 
-### Kiến Trúc Phân Lớp
+### Kiến Trúc Phân Lớp (cập nhật v3.5)
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                  UnifiedMemoryService                        │
 │              (API cấp cao cho agent)                         │
 ├─────────────────────────────────────────────────────────────┤
-│                   AgentDBAdapter                             │
-│         (implements IMemoryBackend interface)                │
+│   AgentDBAdapter  │  Memory Bridge (ADR-076)  │ File Watcher │
+│   (IMemoryBackend)│  (Claude ↔ AgentDB sync)  │ (auto-index) │
+├───────────────────┼───────────────┬─────────────────────────┤
+│   HNSW Index      │  BM25 Engine  │  DiskANN (ADR-077)      │
+│   (semantic)      │  (keyword)    │  (disk-based ANN)       │
+│                   │               │                          │
+│   Hybrid Fusion: α·HNSW + (1-α)·BM25                       │
 ├────────────────────┬────────────────────────────────────────┤
-│    HNSW Index      │        CacheManager                    │
-│  (vector search)   │    (LRU + TTL, 10k entries)            │
+│                    │        CacheManager                     │
+│                    │    (LRU + TTL, 10k entries)             │
 ├────────────────────┴────────────────────────────────────────┤
 │                      AgentDB                                 │
 │               (event-driven storage)                         │
@@ -436,7 +457,7 @@ const results = await memory.query(
 )
 ```
 
-### 8 AgentDB Controllers
+### 19 AgentDB Controllers (mở rộng từ 8 ban đầu)
 
 ```
 ┌────────────────┬─────────────────────────────────────────┐
@@ -448,8 +469,140 @@ const results = await memory.query(
 │  embedding     │ Vector operations (insert/search)       │
 │  search        │ Query processing, ranking               │
 │  cache         │ TTL-based caching layer                 │
+│  ─── MỚI v3.5 ──────────────────────────────────────────│
+│  bridge        │ Claude Code ↔ AgentDB sync (ADR-076)   │
+│  bm25          │ BM25 keyword scoring                    │
+│  diskann       │ DiskANN graph-based search (ADR-077)   │
+│  filewatcher   │ File system change indexing             │
+│  intelligence  │ Dedup + real metrics tracking           │
+│  autopilot     │ Persistent completion (ADR-072)        │
+│  guidance      │ Capability discovery & navigation       │
+│  ruvector      │ WASM semantic embeddings                │
+│  learning      │ Self-learning pipeline (ADR-075)       │
+│  analytics     │ Real analyze commands + metrics         │
+│  health        │ Doctor checks + diagnostics             │
 └────────────────┴─────────────────────────────────────────┘
 ```
+
+### BM25 Hybrid Search (MỚI v3.5)
+
+HNSW tìm kiếm theo **ngữ nghĩa** (semantic similarity), nhưng đôi khi bạn cần tìm chính xác **từ khóa**. BM25 Hybrid Search kết hợp cả hai:
+
+```
+Query: "OAuth PKCE implementation"
+         │
+         ├──────────────────────┬───────────────────────┐
+         │                      │                       │
+         ▼                      ▼                       ▼
+   HNSW Semantic Search    BM25 Keyword Search     Hybrid Fusion
+   "các pattern tương tự   "chứa từ OAuth,        Kết hợp scores:
+    về authentication"      PKCE, implementation"   hybrid = α·HNSW + (1-α)·BM25
+         │                      │                       │
+         ▼                      ▼                       ▼
+   Score: cosine sim       Score: BM25 TF-IDF      Final ranking
+   [0.92, 0.85, 0.78]     [8.5, 7.2, 3.1]         Trả về top-k
+
+BM25 Formula:
+  score(D, Q) = Σ IDF(qi) · (tf(qi,D) · (k1+1)) / (tf(qi,D) + k1 · (1 - b + b · |D|/avgDL))
+
+  Trong đó:
+  - IDF(qi): Inverse Document Frequency — từ hiếm được trọng số cao hơn
+  - tf(qi,D): Term Frequency — số lần từ xuất hiện trong document
+  - k1 = 1.2: Saturation parameter
+  - b = 0.75: Length normalization
+  - |D|/avgDL: Tỷ lệ độ dài document vs trung bình
+```
+
+**Khi nào dùng gì?**
+
+| Trường hợp | Engine tốt nhất |
+|-----------|----------------|
+| "tìm code liên quan đến auth" | HNSW (semantic) |
+| "tìm file chứa `PKCE`" | BM25 (keyword) |
+| "OAuth security best practices" | Hybrid (cả hai) |
+
+### DiskANN Vector Search (MỚI v3.5 — ADR-077)
+
+**DiskANN** là thuật toán vector search được thiết kế cho **dataset lớn** không fit trong RAM. Trong khi HNSW giữ toàn bộ graph trong memory, DiskANN lưu phần lớn trên disk:
+
+```
+HNSW (in-memory):                    DiskANN (disk-based):
+
+RAM: ████████████████████████         RAM: ████ (chỉ PQ codes)
+     (toàn bộ vectors + graph)        Disk: ████████████████████
+                                           (full vectors + graph)
+
+Giới hạn: ~1M vectors (16GB RAM)     Giới hạn: ~1B vectors (SSD)
+Latency: <1ms                        Latency: 5-10ms
+```
+
+```
+Kiến trúc DiskANN:
+
+┌─────────────────────────────────────────────────────────┐
+│ RAM (nhỏ):                                              │
+│   PQ (Product Quantization) codes: 32 bytes/vector      │
+│   Navigation graph: compressed adjacency list            │
+│   Hot cache: frequently accessed nodes                   │
+├─────────────────────────────────────────────────────────┤
+│ SSD (lớn):                                              │
+│   Full-precision vectors: 384 × 4 bytes = 1.5KB/vector  │
+│   Full graph edges: 64 neighbors/node                    │
+│   Sector-aligned reads: 4KB blocks cho sequential I/O    │
+└─────────────────────────────────────────────────────────┘
+
+Search:
+  1. Beam search trên PQ codes (trong RAM) → candidate list
+  2. Fetch full vectors từ SSD cho top candidates
+  3. Re-rank với exact distance
+  4. Return top-k
+```
+
+### File Watcher (MỚI v3.5)
+
+File Watcher theo dõi thay đổi file system và tự động index nội dung vào AgentDB:
+
+```
+File System                    File Watcher                    AgentDB
+    │                              │                              │
+    │── file created ──────────►  │── extract content ──────────►│ store
+    │── file modified ─────────►  │── re-embed ────────────────►│ update
+    │── file deleted ──────────►  │── remove entry ─────────────►│ delete
+    │                              │                              │
+    │                         Debounce (300ms)                    │
+    │                         Ignore: node_modules, .git, dist   │
+
+Watched patterns:
+  - **/*.ts, **/*.js      → Code files
+  - **/*.md               → Documentation
+  - **/*.json             → Configuration
+  - **/*.yaml, **/*.yml   → Config & specs
+```
+
+### Claude Code ↔ AgentDB Memory Bridge (MỚI v3.5 — ADR-076)
+
+Bridge đồng bộ Claude Code auto-memory (`~/.claude/projects/*/memory/*.md`) với AgentDB vector search:
+
+```
+Claude Code                              AgentDB
+┌──────────────────────┐                ┌──────────────────────┐
+│ ~/.claude/projects/  │   Bridge       │                      │
+│   └── memory/        │ ──────────►   │ namespace:           │
+│       ├── user.md    │  ONNX embed   │   claude-memories    │
+│       ├── feedback.md│  384-dim      │   auto-memory        │
+│       └── project.md │  vectors      │   patterns           │
+└──────────────────────┘                └──────────────────────┘
+         │                                       │
+         └───────── Unified Search ──────────────┘
+                    (semantic across both)
+
+MCP Tools:
+  memory_import_claude    → Import memories vào AgentDB
+  memory_bridge_status    → Health: files, entries, SONA state
+  memory_search_unified   → Search tất cả namespaces cùng lúc
+```
+
+Auto-import chạy tự động khi session bắt đầu qua `session-start` hook.
 
 ### Memory Graph — Knowledge Graph
 
@@ -474,7 +627,7 @@ Edge types: depends_on, related_to, parent_of, derived_from
 
 **SONA (Self-Optimizing Neural Architecture)** là hệ thống học từ kinh nghiệm của agent. Thay vì chỉ dùng kiến thức pre-trained của Claude, SONA cho phép agent **học thêm từ công việc thực tế** và cải thiện theo thời gian.
 
-### 4-Step Learning Pipeline
+### 4-Step Learning Pipeline (Wired End-to-End kể từ ADR-075)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -903,33 +1056,40 @@ Session kết thúc → Knowledge được lưu cho session sau!
 | **MMR** | neural | Diverse retrieval | O(k²) |
 | **JSON-RPC 2.0** | mcp | Protocol giao tiếp | O(1) |
 | **Fréchet Mean** | embeddings | Hyperbolic centroid | O(n·d) |
+| **BM25** | memory | Keyword scoring (TF-IDF variant) | O(q·d) |
+| **DiskANN** | memory | Disk-based ANN search | O(log n) |
+| **Hybrid Fusion** | memory | HNSW + BM25 score combination | O(k) |
 
 ---
 
 ---
 
-## 9. Claude CLI Mặc Định vs Ruflo v3
+## 9. Claude CLI Mặc Định vs Ruflo v3.5
 
-| Tính năng | Claude CLI (mặc định) | Ruflo v3 thêm vào |
+| Tính năng | Claude CLI (mặc định) | Ruflo v3.5 thêm vào |
 |-----------|----------------------|-------------------|
-| **MCP** | ✅ Có — là MCP *client* (gọi tools) | Thêm MCP *server* với 215 tools |
-| **Memory** | ❌ Không — chỉ có context window | `@claude-flow/memory` + AgentDB + HNSW |
-| **Embeddings** | ❌ Không | `@claude-flow/embeddings` + 5 providers |
+| **MCP** | ✅ Có — là MCP *client* (gọi tools) | Thêm MCP *server* với 259+ tools |
+| **Memory** | ❌ Không — chỉ có context window | `@claude-flow/memory` + AgentDB + HNSW + BM25 + DiskANN |
+| **Embeddings** | ❌ Không | `@claude-flow/embeddings` + 5 providers + RuVector WASM |
 | **Hooks** | ⚠️ Có cơ bản (`.claude/hooks/`) | 17 hooks + 12 background workers |
-| **Neural/SONA** | ❌ Không | ReasoningBank + LoRA + EWC++ |
+| **Neural/SONA** | ❌ Không | ReasoningBank + LoRA + EWC++ + self-learning pipeline |
+| **Memory Bridge** | ❌ Không | Claude auto-memory ↔ AgentDB sync (MỚI v3.5) |
+| **File Watcher** | ❌ Không | Auto-index file changes vào AgentDB (MỚI v3.5) |
 
 **MCP** — Claude Code được Anthropic build sẵn để làm **MCP client** (gọi tools từ MCP servers). Nhưng bản thân nó không có sẵn server. Ruflo tự tạo MCP server (`npx claude-flow mcp start`) rồi đăng ký vào Claude.
 
-**Memory** — Claude chỉ nhớ trong phạm vi **context window** của conversation hiện tại. Khi đóng session, tất cả mất. Ruflo xây dựng persistent memory riêng bằng AgentDB + SQLite + HNSW.
+**Memory** — Claude chỉ nhớ trong phạm vi **context window** của conversation hiện tại. Khi đóng session, tất cả mất. Ruflo xây dựng persistent memory riêng bằng AgentDB + SQLite + HNSW + BM25 hybrid search.
 
-**Embeddings** — Claude không expose embedding API ra CLI. Ruflo tự gọi OpenAI API hoặc chạy local ONNX model (Transformers.js).
+**Embeddings** — Claude không expose embedding API ra CLI. Ruflo tự gọi OpenAI API hoặc chạy local ONNX model (Transformers.js), hoặc RuVector WASM cho real semantic embeddings.
+
+**Memory Bridge** (MỚI v3.5) — Claude Code có auto-memory (`~/.claude/projects/*/memory/*.md`) nhưng không có vector search. Ruflo bridge đồng bộ chúng vào AgentDB với ONNX embeddings, cho phép unified semantic search.
 
 ```
 Claude CLI gốc:  session 1 → quên → session 2 → quên → ...
 
-Ruflo v3:        session 1 → lưu vào AgentDB
-                 session 2 → tìm lại từ AgentDB → học thêm
-                 session N → ngày càng thông minh hơn
+Ruflo v3.5:      session 1 → lưu vào AgentDB + bridge Claude memories
+                 session 2 → hybrid search (HNSW + BM25) → học thêm
+                 session N → ngày càng thông minh hơn + file watcher indexing
 ```
 
 ---
@@ -1025,20 +1185,122 @@ Agents **không nói chuyện trực tiếp** với nhau — họ dùng shared M
 
 ## Kết Luận
 
-Ruflo v3 là một hệ thống multi-agent AI với:
+Ruflo v3.5 là một hệ thống multi-agent AI với:
 
-1. **MCP** — Chuẩn hóa giao tiếp Claude ↔ Tools qua JSON-RPC 2.0
-2. **Embeddings** — Chuyển text → vector với 5 providers, hyperbolic support
-3. **Memory** — HNSW-indexed semantic storage với AgentDB backend
-4. **Neural/SONA** — Học từ kinh nghiệm qua LoRA + EWC++ + ReasoningBank
+1. **MCP** — Chuẩn hóa giao tiếp Claude ↔ Tools qua JSON-RPC 2.0 (259+ tools)
+2. **Embeddings** — Chuyển text → vector với 5 providers, hyperbolic support, RuVector WASM
+3. **Memory** — HNSW + BM25 hybrid search + DiskANN với AgentDB backend
+4. **Neural/SONA** — Học từ kinh nghiệm qua LoRA + EWC++ + ReasoningBank (end-to-end pipeline)
 5. **Hooks** — Event-driven lifecycle kết nối tất cả hệ thống
+6. **Memory Bridge** — Đồng bộ Claude Code auto-memory ↔ AgentDB (MỚI v3.5)
+7. **File Watcher** — Tự động index file changes vào AgentDB (MỚI v3.5)
 
 Điểm đặc biệt là các hệ thống này **không độc lập** — chúng tạo thành một vòng lặp học tập:
 
 ```
 Làm việc → Hooks ghi nhận → Neural học → Memory lưu → Embeddings index
     ↑                                                        │
-    └────────────── Tìm kiếm kinh nghiệm cũ ────────────────┘
+    ├── File Watcher theo dõi thay đổi → auto-index ────────┤
+    ├── Memory Bridge sync Claude memories ──────────────────┤
+    └────────────── Hybrid search (HNSW + BM25) ─────────────┘
 ```
 
 Càng dùng nhiều, agent càng thông minh hơn.
+
+---
+
+## 11. Changelog: Cải Tiến Từ 01/03/2026 → 07/04/2026
+
+> **119 commits** | v3.5.3 → v3.5.72 | 36 ngày phát triển
+
+### Tính Năng Mới
+
+| Tính năng | ADR | Phiên bản | Mô tả |
+|-----------|-----|-----------|-------|
+| **BM25 Hybrid Search** | — | v3.5.72 | Kết hợp keyword search (BM25) với semantic search (HNSW) |
+| **File Watcher** | — | v3.5.72 | Theo dõi thay đổi file system, tự động index nội dung |
+| **Logger Module** | — | v3.5.72 | Structured logging cho memory package |
+| **DiskANN Backend** | ADR-077 | v3.5.70 | Vector search cho dataset lớn, lưu trên SSD thay vì RAM |
+| **Memory Bridge Phase 2** | ADR-076 | v3.5.68 | MCP tools: import, bridge status, unified search |
+| **Claude ↔ AgentDB Bridge** | ADR-076 | v3.5.67 | Đồng bộ Claude Code auto-memory sang AgentDB với ONNX embeddings |
+| **Self-Learning Pipeline** | ADR-075 | v3.5.65 | Wire end-to-end: hooks → SONA → ReasoningBank → AgentDB |
+| **Autopilot Completion** | ADR-072 | v3.5.44 | Persistent task completion system |
+| **RuVector WASM** | — | v3.5.40 | Real semantic embeddings qua WASM, không cần API call |
+| **Guidance MCP Tools** | — | v3.5.39 | Capability discovery và navigation tools |
+| **22 Real CLI Commands** | — | v3.5.38 | Thay thế 22 stub commands bằng real implementations |
+| **RuFlo Chat UI** | — | v3.5.3 | Chat UI với ruvocal fork, MCP bridge, Docker setup |
+
+### Chiến Dịch "Honesty Audit" (~20 commits)
+
+Effort lớn nhất trong giai đoạn này — loại bỏ toàn bộ fake/simulated data:
+
+| Vấn đề | Giải pháp | Versions |
+|--------|----------|----------|
+| Fabricated metrics trong README | Xóa hoặc thay bằng real data | v3.5.53-59 |
+| Hardcoded benchmark results | Populate từ hook activity thực tế | v3.5.55-56 |
+| Simulated scores (random) | Thay bằng real metric sources | v3.5.53-55 |
+| Fake heuristics trong statusline | Real data sources (AgentDB stats) | v3.5.60 |
+| Auto-completion/fake delays | Xóa hoàn toàn | v3.5.57 |
+| Intelligence store duplicates | Dedup + persist deduped state | v3.5.54 |
+
+### Bug Fixes Nghiêm Trọng (P0/P1)
+
+| Bug | Phiên bản | Mô tả |
+|-----|-----------|-------|
+| Daemon startup crash | v3.5.49 | ESM controller-registry, memory-bridge init |
+| ReasoningBank + SQLite path | v3.5.50 | 4 critical: namespace, init hooks |
+| Terminal execute | v3.5.51 | Agent results, security scan, global CLAUDE.md |
+| 5 critical bugs | v3.5.52 | cwd, intelligence hang, memory init, ruvector |
+| MCP server self-kill | v3.5.38 | Prevent self-kill on startup (#1381) |
+| Stale PID false positives | v3.5.39 | MCP server startup detection |
+| CPU maxCpuLoad | v3.5.23 | CPU-proportional thay hardcoded 2.0 (#1369) |
+| AIDefence regex | v3.5.59 | API key regex quá strict |
+| Intelligence dedup | v3.5.54 | Duplicate entries trong intelligence store |
+| Hive-mind status | v3.5.42 | Real agent state thay hardcoded values (#1385) |
+
+### Security
+
+| Cải tiến | ADR/Issue | Mô tả |
+|---------|-----------|-------|
+| ADR-061 Security Fixes | ADR-061 | Cross-platform hooks, Windows parity |
+| Security Audit Response | #1375 | Address findings từ security audit |
+| Path Resolution | v3.5.15 | `$CLAUDE_PROJECT_DIR` cho hooks path (chống traversal) |
+| AIDefence Fix | v3.5.59 | API key regex + facade tests |
+| v3.5.45-48 Security | — | P1 fixes, WASM CLI security |
+
+### Platform & Compatibility
+
+| Cải tiến | Mô tả |
+|---------|-------|
+| **Windows Parity** | Settings, hooks, cross-platform support đầy đủ |
+| **ESM/CJS Interop** | Nhiều fix cho `'default'` module check, export paths |
+| **Branding** | Claude Flow → **Ruflo** rename across toàn bộ codebase |
+| **Statusline** | Branding RuFlo V3.5, Opus 4.6 (1M context) |
+| **Agent YAML** | Standardize frontmatter to Claude Code spec |
+| **Plugin Manager** | Fix priority + version checks |
+| **Hooks Package** | Fix type export paths |
+
+### So Sánh Architecture: Trước vs Sau 01/03/2026
+
+| Thành phần | Trước (v3.5.3) | Sau (v3.5.72) |
+|-----------|----------------|---------------|
+| MCP tools | 215 | 259+ |
+| Search engines | HNSW only | HNSW + BM25 + DiskANN |
+| AgentDB controllers | 8 | 19 |
+| File indexing | Không có | File Watcher tự động |
+| Memory bridge | Không có | Claude Code ↔ AgentDB bridge |
+| Self-learning | Chưa wired | End-to-end pipeline (ADR-075) |
+| Embeddings | API/ONNX | + RuVector WASM (real semantic, offline) |
+| CLI commands | 22 stubs | 22 real implementations |
+| Metrics | Một số fabricated | 100% real data sources |
+| Platform | Linux/Mac | + Windows parity |
+
+### Bảng Thuật Toán Mới (Bổ Sung)
+
+| Thuật Toán | Package | Mục Đích | Độ Phức Tạp |
+|-----------|---------|---------|-------------|
+| **BM25** | memory | Keyword-based scoring (TF-IDF variant) | O(q·d) |
+| **DiskANN** | memory | Disk-based ANN search cho large datasets | O(log n) |
+| **Hybrid Fusion** | memory | Kết hợp HNSW + BM25 scores | O(k) |
+| **File Watcher** | memory | Debounced filesystem change detection | O(1) per event |
+| **ONNX Bridge** | memory | Claude memory → AgentDB vector sync | O(n·d) |
