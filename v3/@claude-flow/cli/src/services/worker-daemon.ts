@@ -36,7 +36,8 @@ export type WorkerType =
   | 'document'
   | 'refactor'
   | 'benchmark'
-  | 'testgaps';
+  | 'testgaps'
+  | 'reembed';
 
 interface WorkerConfig {
   type: WorkerType;
@@ -101,6 +102,7 @@ const DEFAULT_WORKERS: WorkerConfigInternal[] = [
   { type: 'testgaps', intervalMs: 20 * 60 * 1000, offsetMs: 8 * 60 * 1000, priority: 'normal', description: 'Test coverage analysis', enabled: true },
   { type: 'predict', intervalMs: 10 * 60 * 1000, offsetMs: 0, priority: 'low', description: 'Predictive preloading', enabled: false },
   { type: 'document', intervalMs: 60 * 60 * 1000, offsetMs: 0, priority: 'low', description: 'Auto-documentation', enabled: false },
+  { type: 'reembed', intervalMs: 0, offsetMs: 0, priority: 'normal', description: 'Auto re-embed changed source files (file watcher)', enabled: true },
 ];
 
 // Worker timeout — must exceed the longest per-worker headless timeout (15 min for audit/refactor).
@@ -536,6 +538,12 @@ export class WorkerDaemon extends EventEmitter {
     }
     this.timers.clear();
 
+    // Stop file watcher if running
+    if (this.fileWatcher) {
+      this.fileWatcher.stop();
+      this.fileWatcher = null;
+    }
+
     this.running = false;
     this.removePidFile();
     this.saveState();
@@ -579,8 +587,8 @@ export class WorkerDaemon extends EventEmitter {
       // Use concurrency-controlled execution (P0 fix)
       await this.executeWorkerWithConcurrencyControl(workerConfig);
 
-      // Reschedule
-      if (this.running) {
+      // Continuous workers (intervalMs === 0) run once and stay alive (e.g. file watcher)
+      if (this.running && workerConfig.intervalMs > 0) {
         const timer = setTimeout(runAndReschedule, workerConfig.intervalMs);
         this.timers.set(workerConfig.type, timer);
         state.nextRun = new Date(Date.now() + workerConfig.intervalMs);
@@ -793,6 +801,8 @@ export class WorkerDaemon extends EventEmitter {
         return this.runBenchmarkWorkerLocal();
       case 'preload':
         return this.runPreloadWorkerLocal();
+      case 'reembed':
+        return this.runReembedWorker();
       default:
         return { status: 'unknown worker type', mode: 'local' };
     }
@@ -1027,6 +1037,98 @@ export class WorkerDaemon extends EventEmitter {
       resourcesPreloaded: 0,
       cacheStatus: 'active',
     };
+  }
+
+  // ===== Re-embed Worker (File Watcher) =====
+
+  private fileWatcher: import('@claude-flow/memory').FileWatcherReembedder | null = null;
+
+  /**
+   * Auto re-embed worker: starts a file watcher that detects source code changes
+   * and re-embeds modified files into the memory backend.
+   *
+   * Unlike interval-based workers, this runs continuously via fs.watch.
+   * The first invocation starts the watcher; subsequent calls return stats.
+   */
+  private async runReembedWorker(): Promise<unknown> {
+    // If watcher already running, just do a rescan for any missed changes
+    if (this.fileWatcher) {
+      const stats = this.fileWatcher.getStats();
+      if (stats.running) {
+        const reembedded = await this.fileWatcher.rescan();
+        return {
+          timestamp: new Date().toISOString(),
+          mode: 'file-watcher',
+          status: 'running',
+          rescanReembedded: reembedded,
+          ...stats,
+        };
+      }
+    }
+
+    try {
+      const { FileWatcherReembedder } = await import('@claude-flow/memory');
+      const { generateEmbedding } = await import('../memory/memory-initializer.js');
+
+      this.fileWatcher = new FileWatcherReembedder({
+        rootDir: this.projectRoot,
+        onReembed: async (filePath: string, content: string) => {
+          try {
+            // Generate embedding for changed file
+            const relativePath = filePath.replace(this.projectRoot + '/', '');
+            const textToEmbed = `File: ${relativePath}\n\n${content.slice(0, 8000)}`;
+            const result = await generateEmbedding(textToEmbed);
+
+            // Store in memory via CLI memory command (reuse existing infra)
+            const { execSync } = await import('node:child_process');
+            const key = `source:${relativePath}`;
+            const value = JSON.stringify({
+              path: relativePath,
+              hash: Date.now(),
+              dimensions: result.dimensions,
+              updatedAt: new Date().toISOString(),
+            });
+
+            execSync(
+              `npx @claude-flow/cli@latest memory store --key "${key}" --value '${value.replace(/'/g, "\\'")}' --namespace source-embeddings`,
+              { cwd: this.projectRoot, timeout: 30000, stdio: 'ignore' }
+            );
+
+            this.log('info', `Re-embedded: ${relativePath}`);
+          } catch (err) {
+            this.log('warn', `Re-embed failed for ${filePath}: ${err}`);
+          }
+        },
+      });
+
+      this.fileWatcher.on('reembedded', ({ filePath }: { filePath: string }) => {
+        this.emit('reembed:file', { filePath });
+      });
+
+      this.fileWatcher.on('error', (err: Error) => {
+        this.log('warn', `File watcher error: ${err.message}`);
+      });
+
+      await this.fileWatcher.start();
+
+      const stats = this.fileWatcher.getStats();
+      this.log('info', `File watcher started, tracking ${stats.trackedFiles} files`);
+
+      return {
+        timestamp: new Date().toISOString(),
+        mode: 'file-watcher',
+        status: 'started',
+        ...stats,
+      };
+    } catch (err) {
+      this.log('warn', `Failed to start file watcher: ${err}`);
+      return {
+        timestamp: new Date().toISOString(),
+        mode: 'file-watcher',
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   /**

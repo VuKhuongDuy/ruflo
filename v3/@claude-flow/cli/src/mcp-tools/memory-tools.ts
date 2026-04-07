@@ -345,7 +345,7 @@ export const memoryTools: MCPTool[] = [
       const { searchEntries } = await getMemoryFunctions();
 
       const query = input.query as string;
-      const namespace = (input.namespace as string) || 'default';
+      const namespace = (input.namespace as string) || 'all';
       const limit = (input.limit as number) || 10;
       const threshold = (input.threshold as number) || 0.3;
 

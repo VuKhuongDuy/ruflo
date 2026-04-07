@@ -178,6 +178,10 @@ export type {
   TransferResult,
 } from './agent-memory-scope.js';
 
+// ===== File Watcher Re-embedder =====
+export { FileWatcherReembedder } from './file-watcher.js';
+export type { FileWatcherConfig, FileWatcherStats } from './file-watcher.js';
+
 // ===== Controller Registry (ADR-053) =====
 export { ControllerRegistry, INIT_LEVELS } from './controller-registry.js';
 export type {
